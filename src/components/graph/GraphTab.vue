@@ -14,6 +14,7 @@
 import { ref, computed, watch } from 'vue'
 import { useProjectStore } from '@/stores/project'
 import { storeToRefs } from 'pinia'
+import { useResize } from '@/composables/useResize'
 import NvlGraph from './NvlGraph.vue'
 import NodeDetailPanel from './NodeDetailPanel.vue'
 import MermaidDiagram from '../convert/MermaidDiagram.vue'
@@ -37,17 +38,39 @@ const {
 // 상수 정의
 // ============================================================================
 
-/** 패널 최소 너비 */
-const MIN_PANEL_WIDTH = 280
-
-/** 패널 최대 너비 */
-const MAX_PANEL_WIDTH = 600
-
 /** 검색 결과 최대 표시 개수 */
 const MAX_SEARCH_RESULTS = 8
 
 /** 클래스/인터페이스 라벨 목록 */
 const CLASS_LABELS = ['Class', 'CLASS', 'Interface', 'INTERFACE']
+
+// ============================================================================
+// 리사이즈 Composables
+// ============================================================================
+
+/** 노드 패널 리사이즈 (가로) */
+const { 
+  value: panelWidth, 
+  isResizing, 
+  startResize 
+} = useResize({
+  direction: 'horizontal',
+  initialValue: 380,
+  min: 280,
+  max: 600
+})
+
+/** 콘솔 패널 리사이즈 (세로) */
+const { 
+  value: consoleHeight, 
+  isResizing: isConsoleResizing, 
+  startResize: startConsoleResize 
+} = useResize({
+  direction: 'vertical',
+  initialValue: 180,
+  min: 100,
+  max: 500
+})
 
 // ============================================================================
 // 상태 - UI 제어
@@ -62,14 +85,6 @@ const showNodePanel = ref(true)
 /** 콘솔 패널 표시 여부 */
 const showConsole = ref(true)
 
-/** 콘솔 패널 높이 */
-const consoleHeight = ref(180)
-
-/** 노드 상세 패널 너비 */
-const panelWidth = ref(380)
-
-/** 패널 리사이즈 중 여부 */
-const isResizing = ref(false)
 
 // ============================================================================
 // 상태 - 데이터
@@ -133,29 +148,6 @@ const filteredNodes = computed(() => {
   })
 })
 
-// ============================================================================
-// 패널 리사이즈 핸들러
-// ============================================================================
-
-function startResize(e: MouseEvent): void {
-  isResizing.value = true
-  document.addEventListener('mousemove', onResize)
-  document.addEventListener('mouseup', stopResize)
-  e.preventDefault()
-}
-
-function onResize(e: MouseEvent): void {
-  if (!isResizing.value) return
-  
-  const newWidth = window.innerWidth - e.clientX
-  panelWidth.value = Math.max(MIN_PANEL_WIDTH, Math.min(MAX_PANEL_WIDTH, newWidth))
-}
-
-function stopResize(): void {
-  isResizing.value = false
-  document.removeEventListener('mousemove', onResize)
-  document.removeEventListener('mouseup', stopResize)
-}
 
 // ============================================================================
 // 유틸리티 함수
@@ -272,22 +264,33 @@ watch(hasGraph, (has, prev) => {
   <div class="graph-tab">
     <!-- ========== 서브 탭 ========== -->
     <div class="view-tabs">
+      <div class="tabs-left">
+        <button 
+          class="view-tab"
+          :class="{ active: activeView === 'graph' }"
+          @click="activeView = 'graph'"
+        >
+          <span>🔗</span> 그래프
+          <span class="badge" v-if="hasGraph">{{ graphData?.nodes.length }}</span>
+        </button>
+        <button 
+          class="view-tab"
+          :class="{ active: activeView === 'uml', disabled: !showUmlTab }"
+          :disabled="!showUmlTab"
+          @click="activeView = 'uml'"
+        >
+          <span>📊</span> UML
+          <span class="badge success" v-if="hasUmlDiagram">✓</span>
+        </button>
+      </div>
+      
+      <!-- 통계 보기 버튼 (패널 닫혀있을 때) -->
       <button 
-        class="view-tab"
-        :class="{ active: activeView === 'graph' }"
-        @click="activeView = 'graph'"
+        v-if="hasGraph && !showNodePanel"
+        class="open-node-btn"
+        @click="showNodePanel = true"
       >
-        <span>🔗</span> 그래프
-        <span class="badge" v-if="hasGraph">{{ graphData?.nodes.length }}</span>
-      </button>
-      <button 
-        class="view-tab"
-        :class="{ active: activeView === 'uml', disabled: !showUmlTab }"
-        :disabled="!showUmlTab"
-        @click="activeView = 'uml'"
-      >
-        <span>📊</span> UML
-        <span class="badge success" v-if="hasUmlDiagram">✓</span>
+        📋 {{ selectedNode ? ((selectedNode.properties?.name as string) || selectedNode.labels?.[0]) : '통계 보기' }}
       </button>
     </div>
     
@@ -357,9 +360,16 @@ watch(hasGraph, (has, prev) => {
     <!-- ========== 하단 콘솔 패널 ========== -->
     <div 
       class="console-panel"
-      :class="{ collapsed: !showConsole }"
+      :class="{ collapsed: !showConsole, resizing: isConsoleResizing }"
       :style="{ height: showConsole ? `${consoleHeight}px` : '44px' }"
     >
+      <!-- 리사이즈 핸들 -->
+      <div 
+        v-if="showConsole"
+        class="console-resize-handle" 
+        @mousedown="startConsoleResize"
+      ></div>
+      
       <div class="console-header" @click="showConsole = !showConsole">
         <div class="console-title">
           <span class="console-icon" :class="statusType"></span>
@@ -415,23 +425,16 @@ watch(hasGraph, (has, prev) => {
             :relationshipStats="nvlGraphRef?.relationshipStats"
             :totalNodes="graphData?.nodes.length || 0"
             :totalRelationships="graphData?.links.length || 0"
+            :isProcessing="isProcessing"
             @run-architecture="handleRunArchitecture"
           />
         </div>
       </div>
     </Transition>
     
-    <!-- 노드 패널 열기 버튼 -->
-    <button 
-      v-if="hasGraph && !showNodePanel"
-      class="open-node-btn"
-      @click="showNodePanel = true"
-    >
-      📋 {{ selectedNode ? ((selectedNode.properties?.name as string) || selectedNode.labels?.[0]) : '통계 보기' }}
-    </button>
   </div>
 </template>
-
+    
 <style lang="scss" scoped>
 // ============================================================================
 // 레이아웃
@@ -462,6 +465,9 @@ watch(hasGraph, (has, prev) => {
   position: relative;
   overflow: hidden;
   background: var(--color-bg-primary);
+  // GPU 가속으로 패널 전환 시 깜빡임 방지
+  transform: translateZ(0);
+  backface-visibility: hidden;
 }
 
 // ============================================================================
@@ -470,11 +476,17 @@ watch(hasGraph, (has, prev) => {
 
 .view-tabs {
   display: flex;
-  gap: 4px;
+  justify-content: space-between;
+  align-items: center;
   padding: 10px 16px;
   background: var(--color-bg-tertiary);
   border-bottom: 1px solid var(--color-border);
   flex-shrink: 0;
+}
+
+.tabs-left {
+  display: flex;
+  gap: 4px;
 }
 
 .view-tab {
@@ -678,13 +690,22 @@ watch(hasGraph, (has, prev) => {
 // ============================================================================
 
 .console-panel {
-  flex-shrink: 0;
+  // 그래프 영역 위에 오버레이 (그래프 크기에 영향 안 줌)
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 90;
   background: #eff6ff;
   border-top: 2px solid #bfdbfe;
   display: flex;
   flex-direction: column;
   transition: height 0.25s ease;
   overflow: hidden;
+  // GPU 가속
+  will-change: height;
+  transform: translateZ(0);
+  backface-visibility: hidden;
   
   &.collapsed {
     height: 44px !important;
@@ -692,6 +713,30 @@ watch(hasGraph, (has, prev) => {
     .console-body {
       display: none;
     }
+  }
+  
+  &.resizing {
+    transition: none;
+    user-select: none;
+  }
+}
+
+.console-resize-handle {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 6px;
+  cursor: ns-resize;
+  background: transparent;
+  z-index: 10;
+  
+  &:hover {
+    background: rgba(59, 130, 246, 0.3);
+  }
+  
+  &:active {
+    background: rgba(59, 130, 246, 0.5);
   }
 }
 
@@ -852,6 +897,7 @@ watch(hasGraph, (has, prev) => {
 // ============================================================================
 
 .node-panel {
+  // 그래프 영역 위에 오버레이 (그래프 크기에 영향 안 줌)
   position: absolute;
   top: 0;
   right: 0;
@@ -863,6 +909,10 @@ watch(hasGraph, (has, prev) => {
   flex-direction: column;
   z-index: 100;
   box-shadow: -4px 0 20px rgba(0, 0, 0, 0.08);
+  // GPU 가속으로 깜빡임 방지
+  will-change: transform, opacity;
+  transform: translateZ(0);
+  backface-visibility: hidden;
   
   &.resizing {
     user-select: none;
@@ -957,9 +1007,6 @@ watch(hasGraph, (has, prev) => {
 // ============================================================================
 
 .open-node-btn {
-  position: absolute;
-  top: 16px;
-  right: 16px;
   padding: 8px 14px;
   background: var(--color-bg-elevated);
   border: 1px solid var(--color-accent-primary);
@@ -968,10 +1015,12 @@ watch(hasGraph, (has, prev) => {
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
-  z-index: 50;
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow-sm);
   transition: all 0.15s;
   max-width: 200px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

@@ -62,9 +62,9 @@ function getStrategyFromTarget(target: ConvertTarget): Strategy {
  */
 function convertNeo4jNode(node: Neo4jNode): GraphNode {
   return {
-    id: node['Node ID'],
-    labels: node['Labels'],
-    properties: node['Properties']
+  id: node['Node ID'],
+  labels: node['Labels'],
+  properties: node['Properties']
   }
 }
 
@@ -73,11 +73,11 @@ function convertNeo4jNode(node: Neo4jNode): GraphNode {
  */
 function convertNeo4jRelationship(rel: Neo4jRelationship): GraphLink {
   return {
-    id: rel['Relationship ID'],
-    source: rel['Start Node ID'],
-    target: rel['End Node ID'],
-    type: rel['Type'],
-    properties: rel['Properties']
+  id: rel['Relationship ID'],
+  source: rel['Start Node ID'],
+  target: rel['End Node ID'],
+  type: rel['Type'],
+  properties: rel['Properties']
   }
 }
 
@@ -399,7 +399,7 @@ export const useProjectStore = defineStore('project', () => {
     clearConvertMessages()
     
     // 단계 초기화
-    frameworkSteps.value = frameworkSteps.value.map(s => ({ ...s, done: false }))
+      frameworkSteps.value = frameworkSteps.value.map(s => ({ ...s, done: false }))
     
     try {
       const payload = classNames 
@@ -421,18 +421,18 @@ export const useProjectStore = defineStore('project', () => {
    * Convert 이벤트 핸들러
    */
   function handleConvertEvent(event: any, classNames?: string[]): void {
-    switch (event.type) {
-      case 'message':
-        addConvertMessage('message', event.content || '')
-        break
+          switch (event.type) {
+            case 'message':
+              addConvertMessage('message', event.content || '')
+              break
         
-      case 'data':
-        if (event.file_type === 'mermaid_diagram') {
-          diagramState.value.diagram = event.diagram || ''
-          if (classNames) {
-            diagramState.value.classNames = classNames
-          }
-        } else if (event.code && event.file_name) {
+            case 'data':
+              if (event.file_type === 'mermaid_diagram') {
+                diagramState.value.diagram = event.diagram || ''
+                if (classNames) {
+                  diagramState.value.classNames = classNames
+                }
+              } else if (event.code && event.file_name) {
           updateConvertedFile(event)
         }
         break
@@ -457,30 +457,30 @@ export const useProjectStore = defineStore('project', () => {
    * 변환된 파일 업데이트
    */
   function updateConvertedFile(event: any): void {
-    const file: ConvertedFile = {
-      fileName: event.file_name,
-      fileType: event.file_type || 'unknown',
-      code: event.code,
-      folderName: event.folder_name
-    }
+                const file: ConvertedFile = {
+                  fileName: event.file_name,
+                  fileType: event.file_type || 'unknown',
+                  code: event.code,
+                  folderName: event.folder_name
+                }
     
     const existingIndex = convertedFiles.value.findIndex(
       f => f.fileName === event.file_name
     )
-    
-    if (existingIndex >= 0) {
-      convertedFiles.value[existingIndex] = file
-    } else {
-      convertedFiles.value.push(file)
-    }
-  }
+                
+                if (existingIndex >= 0) {
+                  convertedFiles.value[existingIndex] = file
+                } else {
+                  convertedFiles.value.push(file)
+                }
+              }
   
   /**
    * 프레임워크 단계 업데이트
    */
   function updateFrameworkStep(step: number, done: boolean): void {
     const stepIndex = frameworkSteps.value.findIndex(s => s.step === step)
-    if (stepIndex >= 0) {
+                if (stepIndex >= 0) {
       frameworkSteps.value[stepIndex].done = done
     }
   }
@@ -522,7 +522,7 @@ export const useProjectStore = defineStore('project', () => {
         if (event.type === 'complete') {
           currentStep.value = '다이어그램 생성 완료'
         } else if (event.type === 'error') {
-          currentStep.value = `에러: ${event.content}`
+              currentStep.value = `에러: ${event.content}`
         }
       })
     } catch (error) {

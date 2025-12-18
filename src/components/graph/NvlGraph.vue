@@ -416,20 +416,20 @@ async function initNvl(): Promise<void> {
         initialRels,
         NVL_OPTIONS,
         {
-          onLayoutDone: () => {
-            isInitializing.value = false
-            
+        onLayoutDone: () => {
+          isInitializing.value = false
+          
             // 남은 노드 배치 처리 시작
-            const remainingNodes = newNodes.slice(BATCH_SIZE)
-            if (remainingNodes.length > 0) {
-              enqueueNodes(remainingNodes)
-              enqueueRelationships(newRels.filter(r => !renderedRelIds.has(r.id)))
-            } else {
-              isLoadingBatch.value = false
-              loadingProgress.value = 100
-            }
+          const remainingNodes = newNodes.slice(BATCH_SIZE)
+          if (remainingNodes.length > 0) {
+            enqueueNodes(remainingNodes)
+            enqueueRelationships(newRels.filter(r => !renderedRelIds.has(r.id)))
+          } else {
+            isLoadingBatch.value = false
+            loadingProgress.value = 100
           }
         }
+      }
       )
       
       pendingNodeCount.value = newNodes.length - initialNodes.length
@@ -517,8 +517,8 @@ function clearBatchTimer(): void {
     clearTimeout(batchTimerId)
     batchTimerId = null
   }
-}
-
+  }
+  
 /**
  * 렌더링 큐 초기화
  */
@@ -643,29 +643,29 @@ defineExpose({
     radial-gradient(circle at center, rgba(59, 130, 246, 0.02) 0%, transparent 70%),
     var(--color-bg-primary);
 }
-
+  
 // 빈 상태
-.empty-state {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  text-align: center;
-  color: var(--color-text-muted);
-  
-  .empty-icon {
-    font-size: 3rem;
-    margin-bottom: 1rem;
-    opacity: 0.5;
-  }
-  
-  p {
-    margin: 0.5rem 0;
-  }
-  
-  .hint {
-    font-size: 0.85rem;
-    opacity: 0.7;
+  .empty-state {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    text-align: center;
+    color: var(--color-text-muted);
+    
+    .empty-icon {
+      font-size: 3rem;
+      margin-bottom: 1rem;
+      opacity: 0.5;
+    }
+    
+    p {
+      margin: 0.5rem 0;
+    }
+    
+    .hint {
+      font-size: 0.85rem;
+      opacity: 0.7;
   }
 }
 

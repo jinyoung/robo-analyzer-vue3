@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, nextTick } from 'vue'
 import { useProjectStore } from '@/stores/project'
 import { useSessionStore } from '@/stores/session'
 import { storeToRefs } from 'pinia'
@@ -370,9 +370,16 @@ const closeTab = (tabId: string) => {
   }
 }
 
+// 뷰어 콘텐츠 ref
+const viewerContentRef = ref<HTMLElement>()
+
 // 탭 활성화
 const activateTab = (tabId: string) => {
   activeTabId.value = tabId
+  // 탭 전환 시 스크롤 맨 위로
+  nextTick(() => {
+    viewerContentRef.value?.scrollTo(0, 0)
+  })
 }
 
 // 시스템에 파일 추가
@@ -557,7 +564,7 @@ const handleDdlFileChange = async (e: Event) => {
         </div>
         
         <!-- 탭 콘텐츠 -->
-        <div class="viewer-content">
+        <div class="viewer-content" ref="viewerContentRef">
           <template v-if="activeTab">
             <!-- JSON 또는 파싱 결과 -->
             <JsonViewer v-if="isJsonFile || isParsedFile" :json="activeTab.content" />
@@ -776,14 +783,29 @@ const handleDdlFileChange = async (e: Event) => {
   background: var(--color-bg-elevated);
   border-bottom: 1px solid var(--color-border);
   overflow-x: auto;
-  flex-shrink: 0; // 탭 헤더는 축소되지 않음
+  overflow-y: hidden;
+  flex-shrink: 0;
+  max-width: 100%;
   
-  // 스크롤바 숨김 (탭은 드래그로 스크롤)
-  scrollbar-width: none;
-  -ms-overflow-style: none;
+  // 스크롤바 표시 (연한 색상)
+  scrollbar-width: thin;
+  scrollbar-color: rgba(150, 150, 150, 0.25) transparent;
   
   &::-webkit-scrollbar {
-    display: none;
+    height: 4px;
+  }
+  
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  
+  &::-webkit-scrollbar-thumb {
+    background: rgba(150, 150, 150, 0.25);
+    border-radius: 2px;
+    
+    &:hover {
+      background: rgba(150, 150, 150, 0.4);
+    }
   }
 }
 
@@ -797,6 +819,9 @@ const handleDdlFileChange = async (e: Event) => {
   white-space: nowrap;
   transition: all var(--transition-fast);
   background: var(--color-bg-secondary);
+  flex-shrink: 0; // 탭이 축소되지 않도록 고정
+  min-width: 0; // 텍스트 오버플로우 처리를 위해
+  max-width: 200px; // 최대 너비 제한
   
   &:hover {
     background: var(--color-bg-tertiary);
@@ -821,9 +846,10 @@ const handleDdlFileChange = async (e: Event) => {
   font-family: var(--font-mono);
   font-size: 12px;
   color: var(--color-text-secondary);
-  max-width: 150px;
   overflow: hidden;
   text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0; // 오버플로우 처리를 위한 필수 속성
 }
 
 .tab-close {

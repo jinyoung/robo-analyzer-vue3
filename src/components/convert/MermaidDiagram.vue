@@ -30,31 +30,32 @@ interface DragState {
 // 상수 정의
 // ============================================================================
 
-const MIN_SCALE = 0.3
-const MAX_SCALE = 3
+const MIN_SCALE = 0.2
+const MAX_SCALE = 8
 const ZOOM_STEP = 0.2
 const ZOOM_WHEEL_STEP = 0.1
 
 /** Mermaid 테마 설정 */
 const MERMAID_CONFIG = {
-  startOnLoad: false,
-  theme: 'base',
-  themeVariables: {
-    primaryColor: '#3b82f6',
-    primaryTextColor: '#1e293b',
-    primaryBorderColor: '#e2e8f0',
-    lineColor: '#94a3b8',
-    secondaryColor: '#f1f5f9',
-    tertiaryColor: '#f8fafc',
-    background: '#ffffff',
-    mainBkg: '#ffffff',
-    nodeBkg: '#f1f5f9',
-    nodeBorder: '#e2e8f0',
-    clusterBkg: '#f8fafc',
-    clusterBorder: '#e2e8f0',
-    titleColor: '#1e293b',
-    edgeLabelBackground: '#ffffff'
-  },
+    startOnLoad: false,
+    theme: 'base',
+    themeVariables: {
+      // 실제 다이어그램 요소(박스/선/텍스트) 대비를 확실히 올리는 팔레트
+      primaryColor: '#c7ddff',          // 박스 헤더/강조 배경
+      primaryTextColor: '#0f172a',      // 텍스트(더 진하게)
+      primaryBorderColor: '#1d4ed8',    // 박스 테두리(확실)
+      lineColor: '#334155',            // 관계선(확실)
+      secondaryColor: '#eaf2ff',        // 보조 배경
+      tertiaryColor: '#f3f7ff',         // 보조 배경2
+      background: '#ffffff',
+      mainBkg: '#ffffff',
+      nodeBkg: '#eef6ff',              // 노드 박스 바디 배경
+      nodeBorder: '#1d4ed8',            // 노드 테두리
+      clusterBkg: '#eef2ff',
+      clusterBorder: '#475569',
+      titleColor: '#0f172a',
+      edgeLabelBackground: '#ffffff'
+    },
   securityLevel: 'loose' as const
 }
 
@@ -148,7 +149,7 @@ async function renderDiagram(): Promise<void> {
     svgContent.value = svg
     
     await nextTick()
-    bindClickEvents()
+      bindClickEvents()
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Mermaid 렌더링 오류'
     console.error('[Mermaid] Rendering error:', e)
@@ -276,7 +277,7 @@ async function copyCode(): Promise<void> {
 onMounted(() => {
   initMermaid()
   if (props.diagram) {
-    renderDiagram()
+  renderDiagram()
   }
 })
 
@@ -339,9 +340,9 @@ watch(() => props.diagram, async () => {
       >
         <div 
           ref="containerRef"
-          class="diagram-view"
+        class="diagram-view"
           :style="diagramTransform"
-          v-html="svgContent"
+        v-html="svgContent"
         />
       </div>
       
@@ -435,6 +436,9 @@ watch(() => props.diagram, async () => {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  // 너무 흰색이면 경계가 안 보여서 아주 연한 톤을 깔아 가독성 개선
+  // 요청: 더 진하게(영역 구분 확실)
+  // 바깥 배경은 제거 (다이어그램 요소 색상만으로 가독성 확보)
   background: #ffffff;
   min-height: 0;
   position: relative;
@@ -452,7 +456,9 @@ watch(() => props.diagram, async () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #fafafa;
+  // 바깥(캔버스) 배경색/그리드는 제거
+  background: #ffffff;
+  border: none;
   
   &.dragging {
     cursor: grabbing;
@@ -461,11 +467,14 @@ watch(() => props.diagram, async () => {
 
 .diagram-view {
   display: inline-block;
-  padding: 20px;
+  padding: 22px;
   transition: transform 0.05s ease-out;
-  background: white;
+  background: #ffffff;
+  border: 1px solid rgba(51, 65, 85, 0.55);
   border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  box-shadow:
+    0 10px 30px rgba(15, 23, 42, 0.12),
+    0 2px 10px rgba(15, 23, 42, 0.08);
   
   :deep(svg) {
     display: block;
@@ -482,6 +491,59 @@ watch(() => props.diagram, async () => {
       opacity: 0.8;
     }
   }
+
+  // ==========================================================================
+  // Mermaid SVG 요소 스타일 강화(가독성)
+  // - Mermaid themeVariables가 적용이 약한 케이스를 CSS로 보강
+  // ==========================================================================
+
+  // 클래스/노드 박스 배경/테두리
+  :deep(.classGroup rect),
+  :deep(.node rect),
+  :deep(.node polygon),
+  :deep(.node path) {
+    fill: #eef6ff !important;
+    stroke: #1d4ed8 !important;
+    stroke-width: 1.4px !important;
+  }
+
+  // 클래스 제목 영역이 따로 렌더링되는 경우(버전에 따라 다름)
+  :deep(.classGroup .title),
+  :deep(.classGroup .classTitle),
+  :deep(.node .label),
+  :deep(.nodeLabel) {
+    fill: #0f172a !important;
+    color: #0f172a !important;
+    font-weight: 700 !important;
+  }
+
+  // 일반 텍스트(속성/메서드)
+  :deep(text) {
+    fill: #0f172a !important;
+  }
+
+  // 관계선/화살표
+  :deep(.edgePath path),
+  :deep(.relation line),
+  :deep(.relation path),
+  :deep(.edge path) {
+    stroke: #334155 !important;
+    stroke-width: 1.6px !important;
+    opacity: 0.95 !important;
+  }
+
+  // 화살표 마커(삼각형)
+  :deep(marker path) {
+    fill: #334155 !important;
+    stroke: #334155 !important;
+  }
+
+  // 관계 라벨 배경(겹치는 곳 가독성)
+  :deep(.edgeLabel rect),
+  :deep(.labelBkg) {
+    fill: rgba(255, 255, 255, 0.92) !important;
+    stroke: rgba(51, 65, 85, 0.35) !important;
+  }
 }
 
 // ============================================================================
@@ -493,13 +555,14 @@ watch(() => props.diagram, async () => {
   inset: 0;
   overflow: auto;
   padding: 16px;
-  background: #f8fafc;
+  // 코드 탭도 바깥 배경색 제거
+  background: #ffffff;
   
   pre {
     margin: 0;
     padding: 16px;
-    background: white;
-    border: 1px solid #e2e8f0;
+    background: #ffffff;
+    border: 1px solid rgba(51, 65, 85, 0.55);
     border-radius: 8px;
     font-family: var(--font-mono);
     font-size: 13px;

@@ -28,6 +28,7 @@ interface Props {
   relationshipStats?: Map<string, Stats>
   totalNodes?: number
   totalRelationships?: number
+  isProcessing?: boolean
 }
 
 interface PropertyItem {
@@ -55,7 +56,8 @@ const LONG_VALUE_THRESHOLD = 50
 
 const props = withDefaults(defineProps<Props>(), {
   totalNodes: 0,
-  totalRelationships: 0
+  totalRelationships: 0,
+  isProcessing: false
 })
 
 const emit = defineEmits<{
@@ -232,49 +234,60 @@ function handleRunArchitecture(): void {
       
       <!-- 액션 버튼 -->
       <div v-if="canRunArchitecture" class="action-bar">
-        <button class="action-btn" @click="handleRunArchitecture">
-          📊 다이어그램 생성
+        <button 
+          class="action-btn" 
+          :disabled="props.isProcessing"
+          @click="handleRunArchitecture"
+        >
+          <template v-if="props.isProcessing">
+            ⏳ 생성 중...
+          </template>
+          <template v-else>
+            📊 다이어그램 생성
+          </template>
         </button>
       </div>
     </template>
     
     <!-- ========== 노드 미선택 시: 통계 표시 ========== -->
     <template v-else>
-      <!-- Node labels 섹션 -->
-      <div class="stats-section">
-        <div class="section-title">Node labels</div>
-        <div class="badge-container">
-          <span class="stat-badge total">* ({{ totalNodes }})</span>
-          <span 
-            v-for="stat in sortedNodeStats" 
-            :key="stat.label"
-            class="stat-badge"
-            :style="{ background: stat.color }"
-          >
-            {{ stat.label }} ({{ stat.count }})
-          </span>
+      <div class="stats-wrapper">
+        <!-- Node labels 섹션 -->
+        <div class="stats-section">
+          <div class="section-title">Node labels</div>
+          <div class="badge-container">
+            <span class="stat-badge total">* ({{ totalNodes }})</span>
+            <span 
+              v-for="stat in sortedNodeStats" 
+              :key="stat.label"
+              class="stat-badge"
+              :style="{ background: stat.color }"
+            >
+              {{ stat.label }} ({{ stat.count }})
+            </span>
+          </div>
         </div>
-      </div>
-      
-      <!-- Relationship types 섹션 -->
-      <div class="stats-section">
-        <div class="section-title">Relationship types</div>
-        <div class="badge-container">
-          <span class="stat-badge total">* ({{ totalRelationships }})</span>
-          <span 
-            v-for="stat in sortedRelStats" 
-            :key="stat.type"
-            class="stat-badge rel"
-            :style="{ background: stat.color }"
-          >
-            {{ stat.type }} ({{ stat.count }})
-          </span>
+        
+        <!-- Relationship types 섹션 -->
+        <div class="stats-section">
+          <div class="section-title">Relationship types</div>
+          <div class="badge-container">
+            <span class="stat-badge total">* ({{ totalRelationships }})</span>
+            <span 
+              v-for="stat in sortedRelStats" 
+              :key="stat.type"
+              class="stat-badge rel"
+              :style="{ background: stat.color }"
+            >
+              {{ stat.type }} ({{ stat.count }})
+            </span>
+          </div>
         </div>
-      </div>
-      
-      <!-- 요약 -->
-      <div class="display-summary">
-        Displaying {{ totalNodes }} nodes, {{ totalRelationships }} relationships.
+        
+        <!-- 요약 -->
+        <div class="display-summary">
+          Displaying {{ totalNodes }} nodes, {{ totalRelationships }} relationships.
+        </div>
       </div>
     </template>
   </div>
@@ -452,14 +465,28 @@ function handleRunArchitecture(): void {
   cursor: pointer;
   transition: background 0.2s;
   
-  &:hover {
+  &:hover:not(:disabled) {
     background: #2563eb;
+  }
+  
+  &:disabled {
+    background: #94a3b8;
+    cursor: not-allowed;
+    opacity: 0.7;
   }
 }
 
 // ============================================================================
 // 통계 섹션
 // ============================================================================
+
+.stats-wrapper {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  flex: 1;
+  min-height: 0;
+}
 
 .stats-section {
   margin-bottom: 20px;
@@ -501,7 +528,7 @@ function handleRunArchitecture(): void {
 // ============================================================================
 
 .display-summary {
-  margin-top: auto;
+  margin-top: 20px;
   padding-top: 16px;
   font-size: 12px;
   color: #9ca3af;
