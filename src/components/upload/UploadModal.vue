@@ -2,7 +2,7 @@
 import { ref, watch, computed } from 'vue'
 import UploadTree from './UploadTree.vue'
 import AddMenu from './AddMenu.vue'
-import { buildUploadTree, forceWebkitRelativePath, getDdlPathsFromFiles, getNormalizedUploadPathWithoutProject, inferProjectNameFromPicked, mapPickedFilesToTarget, moveRelPathToFolder, resolveSelectedTargetFolder, uniqueFilesByRelPath } from '@/utils/upload'
+import { buildUploadTree, collectAllFolderPaths, forceWebkitRelativePath, getNormalizedUploadPathWithoutProject, getParentFolderRelPath, inferProjectNameFromPicked, mapPickedFilesToTarget, moveRelPathToFolder, normalizeSlashes, resolveSelectedTargetFolder, splitPath, type UploadTreeNode, uniqueFilesByRelPath } from '@/utils/upload'
 
 interface Props {
   initialMetadata: {
@@ -14,10 +14,10 @@ interface Props {
 const props = defineProps<Props>()
 
 const emit = defineEmits<{
-  confirm: [metadata: { projectName: string; ddl: string[] }]
+  confirm: [metadata: { projectName: string }]
   cancel: []
   'add-files': [files: File[], reanalyze: boolean]
-  'remove-file': [relPath: string]
+  'files-updated': [files: File[]]
 }>()
 
 const projectName = ref(props.initialMetadata.projectName || '')
@@ -28,7 +28,12 @@ const fileInput = ref<HTMLInputElement>()
 const ddlFolderInput = ref<HTMLInputElement>()
 const ddlFileInput = ref<HTMLInputElement>()
 
-const selectedRelPath = ref<string | null>(null)
+// 패널별 선택 상태 분리 - 각 패널에서 독립적으로 선택 관리
+const fileSelectedRelPath = ref<string | null>(null)
+const ddlSelectedRelPath = ref<string | null>(null)
+
+// 빈 폴더 유지를 위한 상태 (파일 삭제 후에도 상위 폴더 유지)
+const emptyFolders = ref<Set<string>>(new Set())
 
 // 파일 존재 여부
 const hasFiles = computed(() => files.value.length > 0)
@@ -56,20 +61,60 @@ watch(() => props.initialFiles, (val) => {
   files.value = [...(val || [])]
 }, { deep: true })
 
-const tree = computed(() => buildUploadTree(files.value, projectName.value))
+const tree = computed(() => buildUploadTree(files.value, projectName.value, emptyFolders.value))
+
 const ddlTree = computed(() => {
   const root = tree.value
   const ddlNode = (root.children || []).find(n => n.type === 'folder' && n.relPath === 'ddl')
+  
+  // DDL은 폴더 구조를 무시하고 파일만 평탄화하여 표시
+  const flattenDdlFiles = (node: UploadTreeNode): UploadTreeNode[] => {
+    const files: UploadTreeNode[] = []
+    if (node.type === 'file') {
+      // relPath를 ddl/파일명 형태로 변환
+      const parts = splitPath(node.relPath)
+      const fileName = parts[parts.length - 1] || node.name
+      return [{
+        ...node,
+        relPath: `ddl/${fileName}`,
+        name: fileName
+      }]
+    }
+    if (node.children) {
+      for (const child of node.children) {
+        files.push(...flattenDdlFiles(child))
+      }
+    }
+    return files
+  }
+  
+  const flatFiles = ddlNode ? flattenDdlFiles(ddlNode) : []
+  
   return {
     type: 'folder' as const,
-    name: `ddl`,
+    name: 'ddl',
     relPath: 'ddl',
-    children: ddlNode?.children || []
+    children: flatFiles.sort((a, b) => a.name.localeCompare(b.name))
   }
 })
 const fileTree = computed(() => {
   const root = tree.value
-  const children = (root.children || []).filter(n => !(n.type === 'folder' && n.relPath === 'ddl'))
+  
+  // ddl 폴더와 ddl로 시작하는 모든 경로를 제외
+  const filterDdlFiles = (nodes: UploadTreeNode[]): UploadTreeNode[] => {
+    return nodes.filter(n => {
+      if (n.type === 'folder' && n.relPath === 'ddl') return false
+      if (n.relPath && n.relPath.startsWith('ddl/')) return false
+      return true
+    }).map(n => {
+      if (n.children && n.children.length > 0) {
+        return { ...n, children: filterDdlFiles(n.children) }
+      }
+      return n
+    })
+  }
+  
+  const children = filterDdlFiles(root.children || [])
   return {
     type: 'folder' as const,
     name: root.name,
@@ -77,8 +122,6 @@ const fileTree = computed(() => {
     children
   }
 })
-const ddlPaths = computed(() => getDdlPathsFromFiles(files.value, projectName.value))
-
 const mergeFiles = (incoming: File[]) => {
   const next = uniqueFilesByRelPath([...files.value, ...incoming], projectName.value)
   files.value = next
@@ -96,15 +139,18 @@ const ensureProjectName = (picked: File[]) => {
 const applyPicked = (panel: PanelKind, kind: PickKind, picked: File[], input: HTMLInputElement) => {
   if (!picked.length) return
 
-  // 자동 구조 인식 최소화: 최상위 공통 폴더가 있으면 projectName만 자동 세팅
   ensureProjectName(picked)
 
-  const root = panel === 'ddl' ? ddlTree.value : fileTree.value
-  const targetFolder = resolveSelectedTargetFolder(panel, selectedRelPath.value, root)
+  // 각 패널은 자신의 선택 상태만 사용
+  const selectedPath = panel === 'ddl' ? ddlSelectedRelPath.value : fileSelectedRelPath.value
+  const panelTree = panel === 'ddl' ? ddlTree.value : fileTree.value
+  
+  // DDL 패널은 무조건 'ddl' 폴더로, 파일 패널은 해당 패널의 선택 상태 기준
+  const targetFolder = panel === 'ddl' ? 'ddl' : resolveSelectedTargetFolder(panel, selectedPath, panelTree)
   const mapped = mapPickedFilesToTarget(panel, kind, picked, targetFolder)
+  
   mergeFiles(mapped)
   emit('add-files', mapped, false)
-
   input.value = ''
 }
 
@@ -115,8 +161,7 @@ const handleConfirm = () => {
     return
   }
   emit('confirm', {
-    projectName: projectName.value.trim(),
-    ddl: ddlPaths.value
+    projectName: projectName.value.trim()
   })
 }
 
@@ -160,18 +205,92 @@ const chooseDdlAddFolder = () => {
   ddlFolderInput.value?.click()
 }
 
-const handleTreeSelect = (relPath: string) => {
-  selectedRelPath.value = relPath
+// 파일 패널 선택 핸들러
+const handleFileTreeSelect = (relPath: string) => {
+  fileSelectedRelPath.value = relPath
 }
 
-const handleTreeRemove = (relPath: string) => {
-  // relPath 기준으로 정확히 제거 (동일 파일명 중복 방지)
+// DDL 패널 선택 핸들러
+const handleDdlTreeSelect = (relPath: string) => {
+  ddlSelectedRelPath.value = relPath
+}
+
+// 파일이 삭제 대상인지 확인하는 헬퍼 함수
+const shouldRemoveFile = (fileRelPath: string, targetRelPath: string): boolean => {
+  const normalizedFile = normalizeSlashes(fileRelPath)
+  const normalizedTarget = normalizeSlashes(targetRelPath)
+  
+  // 정확한 경로 매칭 (파일 삭제)
+  if (normalizedFile === normalizedTarget) return true
+  
+  // 하위 경로 제거 (폴더 삭제 시) - 정확히 하위 경로인지 확인
+  if (normalizedFile.startsWith(normalizedTarget + '/')) return true
+  
+  // DDL 폴더 삭제 시
+  if (normalizedTarget === 'ddl' && normalizedFile.startsWith('ddl/')) return true
+  
+  // DDL 평탄화 경로(ddl/파일명)인 경우 파일명으로 매칭
+  if (normalizedTarget.startsWith('ddl/') && normalizedTarget !== 'ddl') {
+    const fileName = normalizedTarget.replace(/^ddl\//, '')
+    if (normalizedFile.startsWith('ddl/')) {
+      const fileParts = splitPath(normalizedFile)
+      return fileParts[fileParts.length - 1] === fileName
+    }
+  }
+  
+  return false
+}
+
+// 파일 트리에서 삭제 핸들러
+const handleFileTreeRemove = (relPath: string) => {
+  if (!relPath) return
+  
+  // 삭제 전 현재 트리의 모든 폴더 경로 수집 (상위 폴더 유지용)
+  const currentFolders = collectAllFolderPaths(fileTree.value)
+  
+  // 삭제 대상이 아닌 파일만 유지
   files.value = files.value.filter(f => {
-    const p = getNormalizedUploadPathWithoutProject(f, projectName.value)
-    return p !== relPath
+    const fileRelPath = getNormalizedUploadPathWithoutProject(f, projectName.value)
+    return !shouldRemoveFile(fileRelPath, relPath)
   })
-  emit('remove-file', relPath)
-  if (selectedRelPath.value === relPath) selectedRelPath.value = null
+  
+  // 삭제된 경로의 상위 폴더들을 emptyFolders에 추가 (빈 폴더 유지)
+  const parentPath = getParentFolderRelPath(relPath)
+  if (parentPath) {
+    // 부모 경로와 그 상위 경로들도 유지
+    const parts = splitPath(parentPath)
+    for (let i = 1; i <= parts.length; i++) {
+      const folderPath = parts.slice(0, i).join('/')
+      if (currentFolders.has(folderPath)) {
+        emptyFolders.value.add(folderPath)
+      }
+    }
+  }
+  
+  // 삭제된 경로 자체가 폴더인 경우 emptyFolders에서도 제거
+  emptyFolders.value.delete(relPath)
+  // 삭제된 폴더의 하위 폴더들도 제거
+  for (const folder of emptyFolders.value) {
+    if (folder.startsWith(relPath + '/')) {
+      emptyFolders.value.delete(folder)
+    }
+  }
+  
+  emit('files-updated', files.value)
+  if (fileSelectedRelPath.value === relPath) fileSelectedRelPath.value = null
+}
+
+// DDL 트리에서 삭제 핸들러
+const handleDdlTreeRemove = (relPath: string) => {
+  if (!relPath) return
+  
+  files.value = files.value.filter(f => {
+    const fileRelPath = getNormalizedUploadPathWithoutProject(f, projectName.value)
+    return !shouldRemoveFile(fileRelPath, relPath)
+  })
+  
+  emit('files-updated', files.value)
+  if (ddlSelectedRelPath.value === relPath) ddlSelectedRelPath.value = null
 }
 
 const moveFileRelPath = (sourceRelPath: string, targetFolderRelPath: string) => {
@@ -223,10 +342,10 @@ const moveFileRelPath = (sourceRelPath: string, targetFolderRelPath: string) => 
             <UploadTree
               :root="fileTree"
               :show-header="false"
-              :selected-rel-path="selectedRelPath"
+              :selected-rel-path="fileSelectedRelPath"
               :enable-dn-d="true"
-              @select="handleTreeSelect"
-              @remove="handleTreeRemove"
+              @select="handleFileTreeSelect"
+              @remove="handleFileTreeRemove"
               @move="({ sourceRelPath, targetFolderRelPath }) => moveFileRelPath(sourceRelPath, targetFolderRelPath)"
             />
           </div>
@@ -240,10 +359,11 @@ const moveFileRelPath = (sourceRelPath: string, targetFolderRelPath: string) => 
             <UploadTree
               :root="ddlTree"
               :show-header="false"
-              :selected-rel-path="selectedRelPath"
+              :show-root-as-node="(ddlTree.children?.length || 0) > 0"
+              :selected-rel-path="ddlSelectedRelPath"
               :enable-dn-d="true"
-              @select="handleTreeSelect"
-              @remove="handleTreeRemove"
+              @select="handleDdlTreeSelect"
+              @remove="handleDdlTreeRemove"
               @move="({ sourceRelPath, targetFolderRelPath }) => moveFileRelPath(sourceRelPath, targetFolderRelPath || 'ddl')"
             />
           </div>

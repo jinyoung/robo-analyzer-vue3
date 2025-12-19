@@ -8,7 +8,8 @@ const props = defineProps({
   level: { type: Number, required: true },
   selectedRelPath: { type: String as PropType<string | null | undefined>, default: null },
   expanded: { type: Object as PropType<Set<string>>, required: true },
-  enableDnD: { type: Boolean, default: false }
+  enableDnD: { type: Boolean, default: false },
+  showRemoveButton: { type: Boolean, default: true }
 })
 
 const emit = defineEmits<{
@@ -95,7 +96,7 @@ const onDrop = (e: DragEvent) => {
       <span class="icon">{{ iconFor(node) }}</span>
       <span class="name" :title="node.relPath">{{ node.name }}</span>
 
-      <button class="remove" @click.stop="onRemove" title="제거">×</button>
+      <button v-if="showRemoveButton" class="remove" @click.stop="onRemove" title="제거">×</button>
     </div>
 
     <ul v-if="node.type === 'folder' && hasChildren && isExpanded" class="children">
@@ -107,6 +108,7 @@ const onDrop = (e: DragEvent) => {
         :selected-rel-path="selectedRelPath"
         :expanded="expanded"
         :enable-dn-d="enableDnD"
+        :show-remove-button="showRemoveButton"
         @toggle="$emit('toggle', $event)"
         @select="$emit('select', $event)"
         @remove="$emit('remove', $event)"

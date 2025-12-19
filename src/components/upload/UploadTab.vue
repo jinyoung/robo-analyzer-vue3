@@ -5,21 +5,28 @@ import { useSessionStore } from '@/stores/session'
 import { storeToRefs } from 'pinia'
 import DropZone from './DropZone.vue'
 import UploadModal from './UploadModal.vue'
-import FileList from './FileList.vue'
+import UploadTree from './UploadTree.vue'
 import JsonViewer from './JsonViewer.vue'
-import { getNormalizedUploadPathWithoutProject, uniqueFilesByRelPath } from '@/utils/upload'
+import { buildUploadTreeFromUploadedFiles, uniqueFilesByRelPath } from '@/utils/upload'
 
 const projectStore = useProjectStore()
 const sessionStore = useSessionStore()
 const { 
   uploadedFiles, 
   uploadedDdlFiles,
-  parsedFiles,
   isProcessing,
-  currentStep
+  currentStep,
+  projectName
 } = storeToRefs(projectStore)
 
-// (시스템 개념 제거) Upload 탭에서는 업로드된 파일/DDL/파싱결과를 단순 리스트로 표시
+// 업로드된 파일을 트리 구조로 표시
+const uploadedFileTree = computed(() => 
+  buildUploadTreeFromUploadedFiles(uploadedFiles.value, projectName.value)
+)
+const uploadedDdlTree = computed(() => 
+  buildUploadTreeFromUploadedFiles(uploadedDdlFiles.value, projectName.value)
+)
+const selectedRelPath = ref<string | null>(null)
 
 const showModal = ref(false)
 const pendingFiles = ref<File[]>([])
@@ -34,7 +41,7 @@ interface OpenTab {
   id: string
   fileName: string
   content: string
-  type: 'file' | 'parsed'
+  type: 'file'
 }
 
 const openTabs = ref<OpenTab[]>([])
@@ -49,20 +56,12 @@ const isJsonFile = computed(() =>
   activeTab.value?.fileName.toLowerCase().endsWith('.json') || false
 )
 
-// 파싱 결과 파일 여부
-const isParsedFile = computed(() => 
-  activeTab.value?.type === 'parsed'
-)
-
 const hasUploadedFiles = computed(() => 
   uploadedFiles.value.length > 0 || uploadedDdlFiles.value.length > 0
 )
 
-const hasParsedFiles = computed(() => parsedFiles.value.length > 0)
-
 // 드롭존 클릭 시 - 빈 상태로 모달 열기
 const handleOpenModal = () => {
-  console.log('Opening modal (click)')
   pendingFiles.value = []
   pendingMetadata.value = {
     projectName: '',
@@ -72,11 +71,7 @@ const handleOpenModal = () => {
 
 // 파일 드롭 시 - 파일 분석 후 모달 열기
 const handleFilesDrop = (files: File[]) => {
-  console.log('handleFilesDrop called with', files.length, 'files')
-  
   const metadata = analyzeFileStructure(files)
-  console.log('Analyzed metadata:', metadata)
-  
   pendingFiles.value = files
   pendingMetadata.value = metadata
   showModal.value = true
@@ -97,22 +92,15 @@ const analyzeFileStructure = (files: File[]) => {
   }
 }
 
-// 모달에서 파일 추가 시 (개별 파일 - 재분석 안함)
-const handleAddFiles = (files: File[], reanalyze: boolean = false) => {
-  console.log('Adding files from modal:', files.length, 'reanalyze:', reanalyze)
-  
-  // 이제 중복 기준은 "파일명"이 아니라 "프로젝트 기준 상대경로"
+// 모달에서 파일 추가 시
+const handleAddFiles = (files: File[]) => {
   const merged = uniqueFilesByRelPath([...pendingFiles.value, ...files], pendingMetadata.value.projectName)
   pendingFiles.value = merged
 }
 
-// 모달에서 파일 삭제 시
-const handleRemoveFile = (relPath: string) => {
-  console.log('Removing file:', relPath)
-  pendingFiles.value = pendingFiles.value.filter(f => {
-    const p = getNormalizedUploadPathWithoutProject(f, pendingMetadata.value.projectName)
-    return p !== relPath
-  })
+// 모달에서 파일 목록 업데이트 시 (삭제/추가 후 동기화)
+const handleFilesUpdated = (updatedFiles: File[]) => {
+  pendingFiles.value = updatedFiles
 }
 
 // 파일 확장자로 소스 타입 자동 감지
@@ -140,7 +128,7 @@ const detectSourceType = (files: File[]): 'oracle' | 'postgresql' | 'java' | 'py
 }
 
 // 업로드 확인
-const handleUploadConfirm = async (metadata: { projectName: string; ddl: string[] }) => {
+const handleUploadConfirm = async (metadata: { projectName: string }) => {
   showModal.value = false
   
   if (pendingFiles.value.length === 0) {
@@ -157,12 +145,9 @@ const handleUploadConfirm = async (metadata: { projectName: string; ddl: string[
   try {
     const uploadMeta = {
       ...projectStore.understandingMeta,
-      projectName: metadata.projectName,
-      ddl: metadata.ddl
+      projectName: metadata.projectName
     }
     await projectStore.uploadFiles(pendingFiles.value, uploadMeta)
-    
-    projectStore.setDdl(metadata.ddl)
   } catch (error) {
     alert(`업로드 실패: ${error}`)
   }
@@ -189,9 +174,29 @@ const handleUnderstanding = async () => {
   }
 }
 
-// 파일 선택 (탭으로 열기)
-const handleFileSelect = (file: { fileName: string; fileContent?: string }) => {
-  const tabId = `file-${file.fileName}`
+// 트리에서 파일 선택 (탭으로 열기)
+const handleTreeSelect = (relPath: string) => {
+  selectedRelPath.value = relPath
+  
+  // 파일 노드 찾기
+  const findFileNode = (node: any, targetRelPath: string): any => {
+    if (node.relPath === targetRelPath && node.type === 'file') {
+      return node
+    }
+    for (const child of node.children || []) {
+      const found = findFileNode(child, targetRelPath)
+      if (found) return found
+    }
+    return null
+  }
+  
+  const fileNode = findFileNode(uploadedFileTree.value, relPath) || 
+                   findFileNode(uploadedDdlTree.value, relPath)
+  
+  if (!fileNode || !fileNode.fileContent) return
+  
+  const fileName = fileNode.relPath || fileNode.name
+  const tabId = `file-${fileName}`
   
   // 이미 열려있으면 해당 탭으로 이동
   const existing = openTabs.value.find(t => t.id === tabId)
@@ -203,30 +208,9 @@ const handleFileSelect = (file: { fileName: string; fileContent?: string }) => {
   // 새 탭 추가
   openTabs.value.push({
     id: tabId,
-    fileName: file.fileName,
-    content: file.fileContent || '',
+    fileName,
+    content: fileNode.fileContent,
     type: 'file'
-  })
-  activeTabId.value = tabId
-}
-
-// 파싱 결과 선택 (탭으로 열기)
-const handleParseResultSelect = (file: { fileName: string; analysisResult: string }) => {
-  const tabId = `parsed-${file.fileName}`
-  
-  // 이미 열려있으면 해당 탭으로 이동
-  const existing = openTabs.value.find(t => t.id === tabId)
-  if (existing) {
-    activeTabId.value = tabId
-    return
-  }
-  
-  // 새 탭 추가
-  openTabs.value.push({
-    id: tabId,
-    fileName: `${file.fileName} (분석)`,
-    content: file.analysisResult,
-    type: 'parsed'
   })
   activeTabId.value = tabId
 }
@@ -260,7 +244,6 @@ const activateTab = (tabId: string) => {
   })
 }
 
-// (시스템 개념 제거) 업로드 후 추가 파일 편집은 "업로드 설정 모달"에서 처리
 </script>
 
 <template>
@@ -275,51 +258,45 @@ const activateTab = (tabId: string) => {
           />
         </template>
         <template v-else>
-          <div class="file-lists">
-            <!-- 일반 파일 -->
-            <div class="file-section">
+          <div class="uploaded-trees">
+            <!-- 일반 파일 트리 -->
+            <div class="tree-section">
               <div class="section-header">
                 <h3 class="section-title">
                   <span class="icon">📁</span>
                   파일 ({{ uploadedFiles.length }})
                 </h3>
               </div>
-              <FileList
+              <UploadTree
                 v-if="uploadedFiles.length > 0"
-                :files="uploadedFiles"
-                @select="handleFileSelect"
+                :root="uploadedFileTree"
+                :show-header="false"
+                :selected-rel-path="selectedRelPath"
+                :enable-dn-d="false"
+                :show-remove-button="false"
+                @select="handleTreeSelect"
               />
               <div v-else class="empty-section">파일 없음</div>
             </div>
 
-            <!-- DDL 파일 -->
-            <div class="file-section">
+            <!-- DDL 파일 트리 -->
+            <div class="tree-section">
               <div class="section-header">
                 <h3 class="section-title">
                   <span class="icon">🗄️</span>
                   DDL ({{ uploadedDdlFiles.length }})
                 </h3>
               </div>
-              <FileList
+              <UploadTree
                 v-if="uploadedDdlFiles.length > 0"
-                :files="uploadedDdlFiles"
-                @select="handleFileSelect"
+                :root="uploadedDdlTree"
+                :show-header="false"
+                :selected-rel-path="selectedRelPath"
+                :enable-dn-d="false"
+                :show-remove-button="false"
+                @select="handleTreeSelect"
               />
               <div v-else class="empty-section">DDL 파일 없음</div>
-            </div>
-
-            <!-- 파싱 결과 -->
-            <div class="file-section" v-if="parsedFiles.length > 0">
-              <div class="section-header">
-                <h3 class="section-title">
-                  <span class="icon">📊</span>
-                  파싱 결과 ({{ parsedFiles.length }})
-                </h3>
-              </div>
-              <FileList
-                :files="parsedFiles.map(f => ({ fileName: f.fileName }))"
-                @select="file => handleParseResultSelect(parsedFiles.find(p => p.fileName === file.fileName)!)"
-              />
             </div>
           </div>
           
@@ -327,14 +304,14 @@ const activateTab = (tabId: string) => {
             <button 
               class="btn btn--primary" 
               @click="handleParse"
-              :disabled="isProcessing"
+              :disabled="isProcessing || !hasUploadedFiles"
             >
               📄 파싱
             </button>
             <button 
               class="btn btn--primary" 
               @click="handleUnderstanding"
-              :disabled="isProcessing || !hasParsedFiles"
+              :disabled="isProcessing"
             >
               🔗 Understanding
             </button>
@@ -354,8 +331,8 @@ const activateTab = (tabId: string) => {
             :class="{ active: activeTabId === tab.id }"
             @click="activateTab(tab.id)"
           >
-            <span class="tab-icon">{{ tab.type === 'parsed' ? '📊' : '📄' }}</span>
-            <span class="tab-name">{{ tab.fileName }}</span>
+            <span class="tab-icon">📄</span>
+            <span class="tab-name" :title="tab.fileName">{{ tab.fileName }}</span>
             <button class="tab-close" @click.stop="closeTab(tab.id)">×</button>
           </div>
         </div>
@@ -363,8 +340,8 @@ const activateTab = (tabId: string) => {
         <!-- 탭 콘텐츠 -->
         <div class="viewer-content" ref="viewerContentRef">
           <template v-if="activeTab">
-            <!-- JSON 또는 파싱 결과 -->
-            <JsonViewer v-if="isJsonFile || isParsedFile" :json="activeTab.content" />
+            <!-- JSON 파일 -->
+            <JsonViewer v-if="isJsonFile" :json="activeTab.content" />
             <pre v-else class="code-viewer"><code>{{ activeTab.content }}</code></pre>
           </template>
           <template v-else>
@@ -396,8 +373,8 @@ const activateTab = (tabId: string) => {
       :initial-files="pendingFiles"
       @confirm="handleUploadConfirm"
       @cancel="showModal = false"
-      @add-files="(files, reanalyze) => handleAddFiles(files, reanalyze)"
-      @remove-file="handleRemoveFile"
+      @add-files="handleAddFiles"
+      @files-updated="handleFilesUpdated"
     />
   </div>
 </template>
@@ -529,6 +506,71 @@ const activateTab = (tabId: string) => {
   padding: var(--spacing-md);
 }
 
+.uploaded-trees {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  
+  // 모던한 스크롤바 스타일
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.2) transparent;
+  
+  &::-webkit-scrollbar {
+    width: 8px;
+  }
+  
+  &::-webkit-scrollbar-track {
+    background: transparent;
+    margin: 4px 0;
+  }
+  
+  &::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.15);
+    border-radius: 4px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+    transition: background 0.2s ease;
+    
+    &:hover {
+      background: rgba(0, 0, 0, 0.3);
+      background-clip: padding-box;
+    }
+    
+    &:active {
+      background: rgba(0, 0, 0, 0.4);
+      background-clip: padding-box;
+    }
+  }
+  
+  // 스크롤 중일 때만 스크롤바 표시 (선택사항 - 필요시 주석 해제)
+  // &:not(:hover)::-webkit-scrollbar-thumb {
+  //   background: transparent;
+  // }
+}
+
+.tree-section {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  
+  .section-header {
+    flex-shrink: 0;
+  }
+  
+  // UploadTree 컴포넌트의 .tree는 스크롤 없이 자연스럽게 흐르도록
+  :deep(.tree) {
+    flex-shrink: 0;
+    
+    .tree-list {
+      overflow: visible;
+    }
+  }
+}
+
 .hidden {
   display: none;
 }
@@ -537,6 +579,7 @@ const activateTab = (tabId: string) => {
   display: flex;
   gap: var(--spacing-sm);
   flex-wrap: wrap;
+  flex-shrink: 0;
 }
 
 .upload-right {
@@ -647,6 +690,7 @@ const activateTab = (tabId: string) => {
   overflow: auto;
   padding: var(--spacing-md);
   min-height: 0;
+  max-height: 60vh;
   background: var(--color-bg-tertiary);
   
   // 스크롤바 항상 표시

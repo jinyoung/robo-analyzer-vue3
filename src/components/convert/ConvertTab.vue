@@ -136,7 +136,7 @@ const getFileIcon = (fileName: string): string => {
             @click="activeFileTab = file.fileName"
           >
             <span class="tab-icon">{{ getFileIcon(file.fileName) }}</span>
-            <span class="tab-name">{{ file.fileName }}</span>
+            <span class="tab-name" :title="file.fileName">{{ file.fileName }}</span>
           </button>
         </div>
         

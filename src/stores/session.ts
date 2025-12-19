@@ -8,30 +8,18 @@ const STORAGE_KEY_ACTIVE_TAB = 'legacy-modernizer-active-tab'
 
 // 로컬스토리지에서 값 로드
 const loadFromStorage = (key: string, defaultValue: string): string => {
-  try {
-    const stored = localStorage.getItem(key)
-    return stored || defaultValue
-  } catch {
-    return defaultValue
-  }
+  const stored = localStorage.getItem(key)
+  return stored || defaultValue
 }
 
 // 로컬스토리지에 값 저장
 const saveToStorage = (key: string, value: string): void => {
-  try {
-    localStorage.setItem(key, value)
-  } catch (error) {
-    console.warn('로컬스토리지 저장 실패:', error)
-  }
+  localStorage.setItem(key, value)
 }
 
 // 로컬스토리지에서 값 삭제
 const removeFromStorage = (key: string): void => {
-  try {
-    localStorage.removeItem(key)
-  } catch (error) {
-    console.warn('로컬스토리지 삭제 실패:', error)
-  }
+  localStorage.removeItem(key)
 }
 
 export const useSessionStore = defineStore('session', () => {

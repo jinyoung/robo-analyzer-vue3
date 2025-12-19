@@ -31,9 +31,9 @@ export function splitPath(path: string): string[] {
 /**
  * 업로드 파일의 "상대경로"를 프로젝트 루트 기준으로 정규화합니다.
  *
- * - 최상위 폴더는 항상 projectName 으로 고정
- * - Drag&Drop(FileSystemEntry) 또는 <input webkitdirectory>에서 온 webkitRelativePath를 우선 사용
- * - 단일 파일 업로드(상대경로 없음)도 projectName 아래로 강제 배치
+ * - projectName을 최상위에 추가 (이미 있으면 추가 안 함)
+ * - 원본 폴더 구조를 그대로 유지
+ * - ddl/로 시작하는 경로는 projectName 없이 그대로 유지
  */
 export function getNormalizedUploadPath(file: File, projectName: string): string {
   const raw = (file as any).webkitRelativePath || file.name
@@ -42,18 +42,30 @@ export function getNormalizedUploadPath(file: File, projectName: string): string
   const safeProject = (projectName || '').trim()
   if (!safeProject) return parts.join('/')
 
-  if (parts.length >= 2) {
-    parts[0] = safeProject
+  // ddl/로 시작하는 경로는 projectName을 앞에 붙이지 않고 그대로 유지
+  if (parts.length > 0 && parts[0]?.toLowerCase() === 'ddl') {
     return parts.join('/')
   }
 
-  return [safeProject, parts[0] || file.name].join('/')
+  // 이미 projectName으로 시작하면 그대로 반환
+  if (parts[0] === safeProject) {
+    return parts.join('/')
+  }
+
+  // projectName을 앞에 추가 (교체가 아닌 추가)
+  return [safeProject, ...parts].join('/')
 }
 
 export function getNormalizedUploadPathWithoutProject(file: File, projectName: string): string {
   const full = getNormalizedUploadPath(file, projectName)
   const parts = splitPath(full)
   const safeProject = (projectName || '').trim()
+  
+  // ddl/로 시작하는 경로는 그대로 반환
+  if (parts.length > 0 && parts[0]?.toLowerCase() === 'ddl') {
+    return parts.join('/')
+  }
+  
   if (safeProject && parts[0] === safeProject) return parts.slice(1).join('/')
   return parts.join('/')
 }
@@ -77,30 +89,38 @@ export function inferProjectNameFromPicked(picked: File[]): string {
 }
 
 export function forceWebkitRelativePath(file: File, relPath: string): File {
-  try {
-    Object.defineProperty(file, 'webkitRelativePath', {
-      value: relPath,
-      writable: false
-    })
-  } catch {
-    // defineProperty가 막혀있는 경우가 있어도 file.name 기반으로라도 동작하도록 둠
-  }
+  Object.defineProperty(file, 'webkitRelativePath', {
+    value: relPath,
+    writable: false
+  })
   return file
 }
 
-export function prefixPickedAsFolder(picked: File[], targetFolderRelPath: string): File[] {
+export function prefixPickedAsFolder(picked: File[], targetFolderRelPath: string, flattenDdl: boolean = false): File[] {
   if (!targetFolderRelPath) return picked
+  
   return picked.map((f) => {
     const raw = (f as any).webkitRelativePath || f.name
     const parts = splitPath(String(raw))
-    const rest = parts.length >= 2 ? parts.slice(1).join('/') : parts[0] || f.name
-    return forceWebkitRelativePath(f, `${targetFolderRelPath}/${rest}`)
+    
+    if (flattenDdl) {
+      // DDL은 항상 파일명만 사용 (폴더 구조 평탄화)
+      const fileName = parts[parts.length - 1] || f.name
+      return forceWebkitRelativePath(f, `${targetFolderRelPath}/${fileName}`)
+    } else {
+      // 타겟 폴더 아래에 원본 폴더 구조 유지하여 배치
+      return forceWebkitRelativePath(f, `${targetFolderRelPath}/${raw}`)
+    }
   })
 }
 
 export function prefixPickedAsFiles(picked: File[], targetFolderRelPath: string): File[] {
   if (!targetFolderRelPath) return picked
-  return picked.map((f) => forceWebkitRelativePath(f, `${targetFolderRelPath}/${f.name}`))
+  
+  return picked.map((f) => {
+    // 원본 webkitRelativePath를 무시하고 타겟 폴더 아래로 강제 배치
+    return forceWebkitRelativePath(f, `${targetFolderRelPath}/${f.name}`)
+  })
 }
 
 export type UploadPanelKind = 'file' | 'ddl'
@@ -113,8 +133,8 @@ export function normalizeDdlTargetFolder(targetFolderRelPath: string): string {
 
 /**
  * Picked 파일들을 panel/kind/targetFolder 규칙에 맞게 webkitRelativePath로 매핑합니다.
- * - ddl panel이면 무조건 ddl/ 아래로
- * - folder pick은 기존 하위 구조를 유지(최상위 폴더 제거 후 붙임)
+ * - ddl panel이면 무조건 ddl/ 아래로, 폴더 구조 무시하고 파일명만 사용 (평탄화)
+ * - folder pick은 타겟 폴더 아래에 원본 폴더 구조 유지
  * - file pick은 파일명을 targetFolder 아래로 붙임
  */
 export function mapPickedFilesToTarget(
@@ -124,7 +144,10 @@ export function mapPickedFilesToTarget(
   targetFolderRelPath: string
 ): File[] {
   const target = panel === 'ddl' ? normalizeDdlTargetFolder(targetFolderRelPath) : targetFolderRelPath
-  return kind === 'folder' ? prefixPickedAsFolder(picked, target) : prefixPickedAsFiles(picked, target)
+  const flattenDdl = panel === 'ddl' // DDL은 항상 평탄화
+  return kind === 'folder' 
+    ? prefixPickedAsFolder(picked, target, flattenDdl) 
+    : prefixPickedAsFiles(picked, target)
 }
 
 // =============================================================================
@@ -141,18 +164,45 @@ export interface UploadTreeNode {
   children?: UploadTreeNode[]
   /** type === 'file' 일 때만 존재 */
   file?: File
+  /** 업로드된 파일 내용 (서버에서 받은 경우) */
+  fileContent?: string
 }
 
 /**
  * 업로드 파일들을 "프로젝트 루트 기준 상대경로"로 정규화하여 트리로 구성합니다.
+ * emptyFolders를 전달하면 파일이 없어도 해당 폴더를 트리에 유지합니다.
  */
-export function buildUploadTree(files: File[], projectName: string): UploadTreeNode {
+export function buildUploadTree(
+  files: File[], 
+  projectName: string, 
+  emptyFolders: Set<string> = new Set()
+): UploadTreeNode {
   const safeProject = (projectName || '').trim()
   const root: UploadTreeNode = {
     type: 'folder',
     name: safeProject || '(project)',
     relPath: '',
     children: []
+  }
+
+  // 빈 폴더를 먼저 추가
+  for (const folderPath of emptyFolders) {
+    const parts = splitPath(folderPath)
+    if (parts.length === 0) continue
+
+    let current = root
+    for (let i = 0; i < parts.length; i++) {
+      const name = parts[i]
+      const childRelPath = parts.slice(0, i + 1).join('/')
+      if (!current.children) current.children = []
+
+      let child = current.children.find(c => c.name === name && c.type === 'folder')
+      if (!child) {
+        child = { type: 'folder', name, relPath: childRelPath, children: [] }
+        current.children.push(child)
+      }
+      current = child
+    }
   }
 
   const sorted = [...files].sort((a, b) => {
@@ -204,14 +254,101 @@ export function buildUploadTree(files: File[], projectName: string): UploadTreeN
   return root
 }
 
+/**
+ * 트리에서 모든 폴더 경로를 추출합니다.
+ */
+export function collectAllFolderPaths(node: UploadTreeNode): Set<string> {
+  const folders = new Set<string>()
+  const walk = (n: UploadTreeNode) => {
+    if (n.type === 'folder' && n.relPath) {
+      folders.add(n.relPath)
+    }
+    for (const child of n.children || []) walk(child)
+  }
+  walk(node)
+  return folders
+}
+
+/**
+ * 업로드된 파일들(UploadedFile[])을 트리 구조로 변환합니다.
+ * fileName을 경로로 파싱하여 트리를 구성합니다.
+ * 
+ * 기존 buildUploadTree와 동일한 로직을 재사용하되, File 객체 대신 fileName/fileContent를 사용합니다.
+ */
+export function buildUploadTreeFromUploadedFiles(
+  uploadedFiles: Array<{ fileName: string; fileContent?: string }>,
+  projectName: string
+): UploadTreeNode {
+  const safeProject = (projectName || '').trim()
+  const root: UploadTreeNode = {
+    type: 'folder',
+    name: safeProject || '(project)',
+    relPath: '',
+    children: []
+  }
+
+  const sorted = [...uploadedFiles].sort((a, b) => 
+    a.fileName.localeCompare(b.fileName)
+  )
+
+  for (const uploadedFile of sorted) {
+    // fileName에서 projectName 제거하여 상대경로 추출
+    let relPath = uploadedFile.fileName
+    if (safeProject && relPath.startsWith(safeProject + '/')) {
+      relPath = relPath.substring(safeProject.length + 1)
+    }
+    
+    const parts = splitPath(relPath)
+    if (parts.length === 0) continue
+
+    // buildUploadTree와 동일한 트리 구성 로직
+    let current = root
+    for (let i = 0; i < parts.length; i++) {
+      const name = parts[i]
+      const isLeaf = i === parts.length - 1
+
+      const childRelPath = parts.slice(0, i + 1).join('/')
+      if (!current.children) current.children = []
+
+      let child = current.children.find(c => c.name === name && c.type === (isLeaf ? 'file' : 'folder'))
+      if (!child) {
+        child = {
+          type: isLeaf ? 'file' : 'folder',
+          name,
+          relPath: childRelPath,
+          ...(isLeaf ? { fileContent: uploadedFile.fileContent } : { children: [] })
+        }
+        current.children.push(child)
+      } else if (isLeaf) {
+        child.fileContent = uploadedFile.fileContent
+      }
+
+      if (!isLeaf) current = child
+    }
+  }
+
+  // buildUploadTree와 동일한 정렬 로직
+  const sortNode = (node: UploadTreeNode) => {
+    if (!node.children) return
+    node.children.sort((a, b) => {
+      if (a.type !== b.type) return a.type === 'folder' ? -1 : 1
+      return a.name.localeCompare(b.name)
+    })
+    node.children.forEach(sortNode)
+  }
+  sortNode(root)
+
+  return root
+}
+
 // =============================================================================
 // 4) DDL / 중복 제거(dedupe)
 // =============================================================================
 
 /**
- * 사용자가 DDL 패널로 넣은 파일들의 경로 목록을 추출합니다.
+ * 사용자가 DDL 패널로 넣은 파일들의 파일명 목록을 추출합니다.
  * - relPath가 'ddl/...' 형태인 파일만 대상
- * - 반환값은 'ddl/' prefix 제거된 경로
+ * - 반환값은 'ddl/' 제거한 파일명만 (폴더 구조 무시, ddl/ 아래 모든 파일)
  */
 export function getDdlPathsFromFiles(files: File[], projectName: string): string[] {
   const safeProject = (projectName || '').trim()
@@ -221,9 +358,9 @@ export function getDdlPathsFromFiles(files: File[], projectName: string): string
     const parts = splitPath(rel)
     if (parts.length === 0) continue
     if (parts[0]?.toLowerCase() !== 'ddl') continue
-    const sub = parts.slice(1).join('/')
-    if (!sub) continue
-    ddlPaths.push(sub)
+    // ddl/ 제거하고 파일명만 추출 (폴더 구조 무시)
+    const fileName = parts[parts.length - 1] // 마지막이 파일명
+    if (fileName) ddlPaths.push(fileName)
   }
   return Array.from(new Set(ddlPaths)).sort((a, b) => a.localeCompare(b))
 }

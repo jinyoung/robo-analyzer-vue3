@@ -18,7 +18,6 @@ import type {
   SourceType,
   ConvertTarget,
   UploadedFile, 
-  ParsedFile,
   GraphData,
   GraphNode,
   GraphLink,
@@ -119,7 +118,7 @@ export const useProjectStore = defineStore('project', () => {
   
   const uploadedFiles = ref<UploadedFile[]>([])
   const uploadedDdlFiles = ref<UploadedFile[]>([])
-  const parsedFiles = ref<ParsedFile[]>([])
+  // 파싱 결과는 더 이상 JSON으로 받지 않음
   
   // ==========================================================================
   // 상태 - 그래프 (Map으로 관리하여 ID 기반 덮어쓰기)
@@ -182,15 +181,13 @@ export const useProjectStore = defineStore('project', () => {
   const understandingMeta = computed<BackendRequestMetadata>(() => ({
     strategy: getStrategyFromSource(sourceType.value),
     target: sourceType.value,
-    projectName: projectName.value,
-    ddl: ddl.value
+    projectName: projectName.value
   }))
   
   const convertingMeta = computed<BackendRequestMetadata>(() => ({
     strategy: getStrategyFromTarget(convertTarget.value),
     target: convertTarget.value,
-    projectName: projectName.value,
-    ddl: ddl.value
+    projectName: projectName.value
   }))
   
   const isValidConfig = computed(() => 
@@ -311,17 +308,15 @@ export const useProjectStore = defineStore('project', () => {
   }
   
   /**
-   * 파싱 요청
+   * 파싱 요청 (결과 JSON 없음, 완료만 표시)
    */
   async function parseFiles() {
     isProcessing.value = true
     currentStep.value = '파싱 중...'
     
     try {
-      const result = await antlrApi.parse(understandingMeta.value, sessionStore.getHeaders())
-      parsedFiles.value = result.files
+      await antlrApi.parse(understandingMeta.value, sessionStore.getHeaders())
       currentStep.value = '파싱 완료'
-      return result
     } catch (error) {
       currentStep.value = '파싱 실패'
       throw error
@@ -492,7 +487,6 @@ export const useProjectStore = defineStore('project', () => {
         strategy: 'architecture' as const,
         target: 'mermaid',
         projectName: projectName.value,
-        ddl: ddl.value,
         classNames
       }
       
@@ -590,7 +584,6 @@ export const useProjectStore = defineStore('project', () => {
     // 파일
     uploadedFiles.value = []
     uploadedDdlFiles.value = []
-    parsedFiles.value = []
     
     // 그래프
     clearGraphData()
@@ -623,7 +616,6 @@ export const useProjectStore = defineStore('project', () => {
     ddl,
     uploadedFiles,
     uploadedDdlFiles,
-    parsedFiles,
     graphData,
     convertedFiles,
     diagramState,

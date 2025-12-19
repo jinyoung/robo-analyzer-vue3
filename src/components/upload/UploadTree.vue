@@ -9,6 +9,10 @@ interface Props {
   selectedRelPath?: string | null
   showHeader?: boolean
   enableDnD?: boolean
+  /** 루트를 트리 노드로 표시할지 여부 (기본값: false) */
+  showRootAsNode?: boolean
+  /** 삭제 버튼 표시 여부 (기본값: true) */
+  showRemoveButton?: boolean
 }
 
 const props = defineProps<Props>()
@@ -44,7 +48,13 @@ const toggle = (relPath: string) => {
   expanded.value = next
 }
 
-const flat = computed(() => props.root.children || [])
+const flat = computed(() => {
+  if (props.showRootAsNode) {
+    // 루트를 트리 노드로 표시
+    return [props.root]
+  }
+  return props.root.children || []
+})
 
 const onSelect = (relPath: string) => emit('select', relPath)
 const onRemove = (relPath: string) => emit('remove', relPath)
@@ -53,7 +63,7 @@ const onMove = (payload: { sourceRelPath: string; targetFolderRelPath: string })
 
 <template>
   <div class="tree">
-    <div v-if="showHeader !== false" class="tree-root">
+    <div v-if="showHeader !== false && !showRootAsNode" class="tree-root">
       <span class="root-name">{{ root.name }}</span>
     </div>
 
@@ -70,6 +80,7 @@ const onMove = (payload: { sourceRelPath: string; targetFolderRelPath: string })
         :selected-rel-path="selectedRelPath"
         :expanded="expanded"
         :enable-dn-d="enableDnD"
+        :show-remove-button="showRemoveButton !== false"
         @toggle="toggle"
         @select="onSelect"
         @remove="onRemove"

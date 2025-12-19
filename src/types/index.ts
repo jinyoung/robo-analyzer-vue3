@@ -34,8 +34,7 @@ export interface BackendRequestMetadata {
   strategy: Strategy
   target: string
   projectName: string
-  /** ddl 폴더 하위 상대경로 목록 (예: 'tables/a.sql') */
-  ddl: string[]
+  // ddl은 multipart filename 경로(ddl/...)로 서버가 자동 구분하므로 메타데이터에서 제거
 }
 
 // ============================================================================
@@ -48,11 +47,7 @@ export interface UploadedFile {
   fileContent: string
 }
 
-/** 파싱된 파일 */
-export interface ParsedFile {
-  fileName: string
-  analysisResult: string
-}
+// 파싱 결과는 더 이상 JSON으로 받지 않음 (파싱 완료만 표시)
 
 /** 변환된 파일 */
 export interface ConvertedFile {
@@ -218,10 +213,10 @@ export interface FileUploadResponse {
   ddlFiles: UploadedFile[]
 }
 
-/** 파싱 응답 */
+/** 파싱 응답 (단순 완료 상태만) */
 export interface ParseResponse {
   projectName: string
-  files: ParsedFile[]
+  status?: 'complete'
 }
 
 /** 삭제 응답 */

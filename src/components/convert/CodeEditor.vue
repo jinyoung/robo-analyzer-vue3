@@ -103,7 +103,7 @@ watch(() => props.language, () => {
   <div class="code-editor">
     <div class="editor-header">
       <span class="file-info">
-        <span class="file-name">{{ fileName }}</span>
+        <span class="file-name" :title="fileName">{{ fileName }}</span>
         <span class="file-lang">{{ language }}</span>
       </span>
       <div class="editor-actions">

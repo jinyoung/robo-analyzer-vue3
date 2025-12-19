@@ -40,7 +40,15 @@ type Headers = Record<string, string>
  */
 async function handleHttpError(response: Response): Promise<never> {
   const errorText = await response.text().catch(() => '')
-  throw new Error(errorText || `HTTP ${response.status}`)
+  const errorMessage = errorText || `HTTP ${response.status}`
+  
+  // 서버 에러 상세 정보를 콘솔에 출력 (디버깅용)
+  console.error(`[API Error] ${response.status} ${response.statusText}`)
+  console.error(`[API Error] URL: ${response.url}`)
+  console.error(`[API Error] Response body:`, errorMessage)
+  console.error(`[API Error] Response headers:`, Object.fromEntries(response.headers.entries()))
+  
+  throw new Error(errorMessage)
 }
 
 /**
@@ -72,11 +80,23 @@ async function postFormData<T>(
   formData: FormData, 
   headers: Headers
 ): Promise<T> {
+  // 디버깅: FormData 내용 확인
+  console.log(`[API] POST ${url}`)
+  console.log('[API] Headers:', headers)
+  console.log('[API] Full URL:', window.location.origin + url)
+  
   const response = await fetch(url, {
     method: 'POST',
-    headers: { 'Session-UUID': headers['Session-UUID'] },
+    headers: { 
+      'Session-UUID': headers['Session-UUID'],
+      ...(headers['OpenAI-Api-Key'] ? { 'OpenAI-Api-Key': headers['OpenAI-Api-Key'] } : {}),
+      'Accept-Language': headers['Accept-Language'] || 'ko'
+    },
     body: formData
   })
+  
+  console.log(`[API] Response status: ${response.status} ${response.statusText}`)
+  console.log(`[API] Response headers:`, Object.fromEntries(response.headers.entries()))
   
   if (!response.ok) {
     await handleHttpError(response)
@@ -153,11 +173,9 @@ function processBuffer(buffer: string, onEvent: StreamCallback): string {
     if (!line.trim()) continue
     
     const event = parseJsonLine(line)
-    if (event) {
-      onEvent(event)
-      if (event.type === 'complete' || event.type === 'error') {
-        return ''
-      }
+    onEvent(event)
+    if (event.type === 'complete' || event.type === 'error') {
+      return ''
     }
   }
   
@@ -171,19 +189,14 @@ function processFinalBuffer(buffer: string, onEvent: StreamCallback): void {
   if (!buffer.trim()) return
   
   const event = parseJsonLine(buffer)
-  if (event) onEvent(event)
+  onEvent(event)
 }
 
 /**
  * JSON 라인 파싱
  */
-function parseJsonLine(line: string): StreamEvent | null {
-  try {
-    return JSON.parse(line)
-  } catch {
-    console.warn('JSON 파싱 실패:', line)
-    return null
-  }
+function parseJsonLine(line: string): StreamEvent {
+  return JSON.parse(line)
 }
 
 // ============================================================================
@@ -244,7 +257,7 @@ export const antlrApi = {
     headers: Headers
   ): Promise<ParseResponse> {
     return postJson<ParseResponse>(
-      `${ANTLR_BASE_URL}/parsing`, 
+      `${ANTLR_BASE_URL}/parse`, 
       metadata, 
       headers
     )

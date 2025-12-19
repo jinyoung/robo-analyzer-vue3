@@ -24,13 +24,11 @@ export default defineConfig({
       // python 서버(0.0.0.0:포트)와의 연결 문제를 방지
       '/antlr': {
         target: 'http://127.0.0.1:8081',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/antlr/, '')
+        changeOrigin: true
       },
-      '/api': {
+      '/backend': {
         target: 'http://127.0.0.1:5502',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api/, '')
       }
     }
   },

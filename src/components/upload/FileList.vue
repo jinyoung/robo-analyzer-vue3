@@ -47,7 +47,7 @@ const getFileIcon = (fileName: string): string => {
     >
       <span class="file-icon">{{ getFileIcon(file.fileName) }}</span>
       <span class="file-info">
-        <span class="file-name">{{ file.fileName }}</span>
+        <span class="file-name" :title="file.fileName">{{ file.fileName }}</span>
       </span>
     </button>
   </div>
