@@ -22,7 +22,7 @@ import { getNormalizedUploadPath } from '@/utils/upload'
 // ============================================================================
 
 const ANTLR_BASE_URL = '/antlr'
-const BACKEND_BASE_URL = '/api'
+const BACKEND_BASE_URL = '/backend'
 
 // ============================================================================
 // 타입 정의
@@ -257,7 +257,7 @@ export const antlrApi = {
     headers: Headers
   ): Promise<ParseResponse> {
     return postJson<ParseResponse>(
-      `${ANTLR_BASE_URL}/parse`, 
+      `${ANTLR_BASE_URL}/parsing`, 
       metadata, 
       headers
     )
@@ -278,7 +278,7 @@ export const backendApi = {
     onEvent: StreamCallback
   ): Promise<void> {
     await streamFetch(
-      `${BACKEND_BASE_URL}/cypherQuery/`,
+      `${BACKEND_BASE_URL}/understanding/`,
       metadata,
       headers,
       onEvent
@@ -294,7 +294,7 @@ export const backendApi = {
     onEvent: StreamCallback
   ): Promise<void> {
     await streamFetch(
-      `${BACKEND_BASE_URL}/convert/`,
+      `${BACKEND_BASE_URL}/converting/`,
       payload,
       headers,
       onEvent
@@ -308,7 +308,7 @@ export const backendApi = {
     projectName: string,
     headers: Headers
   ): Promise<void> {
-    const response = await fetch(`${BACKEND_BASE_URL}/downloadJava/`, {
+    const response = await fetch(`${BACKEND_BASE_URL}/download/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...headers },
       body: JSON.stringify({ projectName })

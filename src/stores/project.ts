@@ -360,7 +360,9 @@ export const useProjectStore = defineStore('project', () => {
           if (event.type === 'complete') {
             currentStep.value = 'Understanding 완료'
           } else if (event.type === 'error') {
-            currentStep.value = `에러: ${event.content}`
+            // 상단 상태바에는 상세 에러(JSON 등)를 노출하지 않고,
+            // 간단한 메시지만 표시하고 상세 내용은 로그 패널에서만 보여준다.
+            currentStep.value = 'Understanding 에러 (상세 내용은 로그 패널 참고)'
           }
         }
       )
@@ -434,7 +436,9 @@ export const useProjectStore = defineStore('project', () => {
         break
         
       case 'error':
-        currentStep.value = `에러: ${event.content}`
+        // 상단 상태바에는 상세 에러(JSON 등)를 노출하지 않고,
+        // 간단한 메시지만 표시하고 상세 내용은 로그 패널에서만 보여준다.
+        currentStep.value = 'Convert 에러 (상세 내용은 로그 패널 참고)'
         break
     }
   }
