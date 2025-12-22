@@ -166,10 +166,10 @@ function formatTime(timestamp: string): string {
 }
 
 /**
- * 노드에서 시스템명 추출
+ * 노드에서 디렉토리 추출
  */
-function getSystemName(node: GraphNode): string {
-  return (node.properties?.system_name as string) || ''
+function getDirectory(node: GraphNode): string {
+  return (node.properties?.directory as string) || ''
 }
 
 /**
@@ -211,43 +211,57 @@ function handleNodeDoubleClick(node: GraphNode): void {
 function handleSearchSelect(node: GraphNode): void {
   selectedNode.value = node
   
-  // UML 뷰에서 검색 시 다이어그램 확장
-  if (activeView.value === 'uml') {
-    const className = getClassName(node)
-    const systemName = getSystemName(node)
-    
-    if (!className) {
-      alert('클래스명을 찾을 수 없습니다.')
-      return
-    }
-    
-    if (!systemName) {
-      alert(`시스템명(system_name)을 찾을 수 없습니다.\n클래스: ${className}`)
-      return
-    }
-    
-    handleDiagramExpand(`${systemName}/${className}`)
-    searchQuery.value = ''
+  const directory = getDirectory(node)
+  const className = getClassName(node)
+  
+  if (!directory) {
+    alert(`디렉토리(directory)를 찾을 수 없습니다.\n클래스: ${className}`)
+    return
   }
+  
+  if (!className) {
+    alert('클래스명을 찾을 수 없습니다.')
+    return
+  }
+  
+  // UML 뷰로 전환하고 다이어그램 생성/확장
+  activeView.value = 'uml'
+  
+  if (hasUmlDiagram.value) {
+    // 기존 다이어그램이 있으면 확장
+    projectStore.expandDiagram(directory, className)
+  } else {
+    // 기존 다이어그램이 없으면 새로 생성
+    projectStore.generateDiagram([{ directory, className }])
+  }
+  
+  searchQuery.value = ''
 }
 
-/**
- * 아키텍처 다이어그램 생성 핸들러
- */
-async function handleRunArchitecture(classNames: string[]): Promise<void> {
-  try {
-    await projectStore.generateDiagram(classNames)
-    activeView.value = 'uml'
-  } catch (error) {
-    alert(`다이어그램 생성 실패: ${error}`)
-  }
-}
 
 /**
- * 다이어그램 확장 핸들러
+ * 다이어그램 확장 핸들러 (MermaidDiagram에서 클래스 클릭 시)
  */
-function handleDiagramExpand(className: string): void {
-  projectStore.expandDiagram(className)
+function handleDiagramExpand(clickedClassName: string): void {
+  // graphData에서 해당 클래스를 찾아서 directory 추출
+  const node = graphData.value?.nodes.find(n => {
+    const nodeClassName = getClassName(n)
+    return nodeClassName === clickedClassName || 
+           nodeClassName === clickedClassName.split('\\').pop() ||
+           nodeClassName === clickedClassName.split('/').pop()
+  })
+  
+  if (node) {
+    const directory = getDirectory(node)
+    const nodeClassName = getClassName(node)
+    if (directory && nodeClassName) {
+      projectStore.expandDiagram(directory, nodeClassName)
+    } else {
+      alert(`클래스 정보를 찾을 수 없습니다: ${clickedClassName}`)
+    }
+  } else {
+    alert(`클래스를 찾을 수 없습니다: ${clickedClassName}`)
+  }
 }
 
 // ============================================================================
@@ -335,7 +349,7 @@ watch(hasGraph, (has, prev) => {
               @click="handleSearchSelect(node)"
             >
               <span class="tag">{{ node.labels?.[0] }}</span>
-              {{ node.properties?.name || node.id }}
+              {{ node.properties?.directory || node.properties?.name || node.id }}
             </button>
           </div>
         </div>
@@ -426,7 +440,6 @@ watch(hasGraph, (has, prev) => {
             :totalNodes="graphData?.nodes.length || 0"
             :totalRelationships="graphData?.links.length || 0"
             :isProcessing="isProcessing"
-            @run-architecture="handleRunArchitecture"
           />
         </div>
       </div>

@@ -130,7 +130,6 @@ let updatePending = false
 function toNvlNode(node: GraphNode): NvlNode {
   const labels = node.labels || []
   const name = (node.properties?.name as string) 
-    || (node.properties?.system_name as string)
     || labels[0] 
     || node.id
   

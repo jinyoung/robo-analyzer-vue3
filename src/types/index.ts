@@ -54,7 +54,7 @@ export interface ConvertedFile {
   fileName: string
   fileType: string
   code: string
-  folderName?: string
+  directory?: string
   summary?: string
 }
 
@@ -153,7 +153,7 @@ export interface DiagramState {
 /** 클래스 정보 (다이어그램 검색용) */
 export interface ClassInfo {
   className: string
-  folderName: string
+  directory: string
   fileName: string
   type: 'CLASS' | 'INTERFACE'
 }
@@ -188,7 +188,7 @@ export interface StreamEvent {
   // 파일 데이터
   file_type?: string
   file_name?: string
-  folder_name?: string
+  directory?: string
   code?: string
   diagram?: string
   

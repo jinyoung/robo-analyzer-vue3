@@ -6,7 +6,6 @@
  * 주요 기능:
  * - 선택된 노드의 속성 표시
  * - 노드/관계 타입별 통계 표시
- * - 다이어그램 생성 액션
  */
 
 import { computed, ref } from 'vue'
@@ -44,9 +43,6 @@ interface PropertyItem {
 /** 숨길 속성 키 목록 */
 const HIDDEN_KEYS = ['labels', 'user_id', 'project_name']
 
-/** 다이어그램 생성 가능한 노드 타입 */
-const ARCHITECTURE_NODE_TYPES = ['CLASS', 'PROCEDURE', 'FUNCTION']
-
 /** 긴 값 기준 (자수) */
 const LONG_VALUE_THRESHOLD = 50
 
@@ -60,9 +56,6 @@ const props = withDefaults(defineProps<Props>(), {
   isProcessing: false
 })
 
-const emit = defineEmits<{
-  'run-architecture': [classNames: string[]]
-}>()
 
 // ============================================================================
 // 상태
@@ -97,10 +90,6 @@ const properties = computed<PropertyItem[]>(() => {
     }))
 })
 
-/** 다이어그램 생성 가능 여부 */
-const canRunArchitecture = computed(() => 
-  props.node && ARCHITECTURE_NODE_TYPES.includes(props.node.labels?.[0] || '')
-)
 
 // ============================================================================
 // Computed - 통계
@@ -135,21 +124,6 @@ function isLongValue(value: string): boolean {
   return value.length > LONG_VALUE_THRESHOLD || value.includes('\n')
 }
 
-/**
- * 노드에서 시스템명 추출
- */
-function getSystemName(node: GraphNode): string {
-  return (node.properties?.system_name as string) || ''
-}
-
-/**
- * 노드에서 클래스명 추출
- */
-function getClassName(node: GraphNode): string {
-  return (node.properties?.class_name as string)
-    || (node.properties?.name as string)
-    || ''
-}
 
 // ============================================================================
 // 이벤트 핸들러
@@ -166,27 +140,6 @@ function toggleExpand(key: string): void {
   }
 }
 
-/**
- * 다이어그램 생성 실행
- */
-function handleRunArchitecture(): void {
-  if (!props.node) return
-  
-  const className = getClassName(props.node)
-  const systemName = getSystemName(props.node)
-  
-  if (!className) {
-    alert('클래스명을 찾을 수 없습니다. 노드 속성을 확인해주세요.')
-    return
-  }
-  
-  if (!systemName) {
-    alert(`시스템명(system_name)을 찾을 수 없습니다.\n클래스: ${className}`)
-    return
-  }
-  
-  emit('run-architecture', [`${systemName}/${className}`])
-}
 </script>
 
 <template>
@@ -232,21 +185,6 @@ function handleRunArchitecture(): void {
         </table>
       </div>
       
-      <!-- 액션 버튼 -->
-      <div v-if="canRunArchitecture" class="action-bar">
-        <button 
-          class="action-btn" 
-          :disabled="props.isProcessing"
-          @click="handleRunArchitecture"
-        >
-          <template v-if="props.isProcessing">
-            ⏳ 생성 중...
-          </template>
-          <template v-else>
-            📊 다이어그램 생성
-          </template>
-        </button>
-      </div>
     </template>
     
     <!-- ========== 노드 미선택 시: 통계 표시 ========== -->
@@ -443,38 +381,6 @@ function handleRunArchitecture(): void {
   }
 }
 
-// ============================================================================
-// 액션 버튼
-// ============================================================================
-
-.action-bar {
-  margin-top: auto;
-  padding-top: 16px;
-  border-top: 1px solid #e5e7eb;
-}
-
-.action-btn {
-  width: 100%;
-  padding: 12px;
-  background: #3b82f6;
-  border: none;
-  border-radius: 8px;
-  color: white;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background 0.2s;
-  
-  &:hover:not(:disabled) {
-    background: #2563eb;
-  }
-  
-  &:disabled {
-    background: #94a3b8;
-    cursor: not-allowed;
-    opacity: 0.7;
-  }
-}
 
 // ============================================================================
 // 통계 섹션

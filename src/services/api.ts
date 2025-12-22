@@ -289,7 +289,7 @@ export const backendApi = {
    * Convert (코드 변환)
    */
   async convert(
-    payload: BackendRequestMetadata & { classNames?: string[] },
+    payload: BackendRequestMetadata & { directory?: string[] },
     headers: Headers,
     onEvent: StreamCallback
   ): Promise<void> {

@@ -96,6 +96,19 @@ function createInitialSteps(strategy: Strategy): { step: number; done: boolean }
   return Array.from({ length: 5 }, (_, i) => ({ step: i + 1, done: false }))
 }
 
+/**
+ * 클래스 목록에서 중복 제거 (directory + className 기준)
+ */
+function deduplicateClasses(classes: Array<{ directory: string; className: string }>): Array<{ directory: string; className: string }> {
+  const seen = new Set<string>()
+  return classes.filter(c => {
+    const key = `${c.directory}::${c.className}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
 // ============================================================================
 // 스토어 정의
 // ============================================================================
@@ -391,7 +404,7 @@ export const useProjectStore = defineStore('project', () => {
     
     try {
       const payload = classNames 
-        ? { ...convertingMeta.value, classNames }
+        ? { ...convertingMeta.value, directory: classNames }
         : convertingMeta.value
         
       await backendApi.convert(payload, sessionStore.getHeaders(), (event) => {
@@ -451,7 +464,7 @@ export const useProjectStore = defineStore('project', () => {
                   fileName: event.file_name,
                   fileType: event.file_type || 'unknown',
                   code: event.code,
-                  folderName: event.folder_name
+                  directory: event.directory
                 }
     
     const existingIndex = convertedFiles.value.findIndex(
@@ -480,37 +493,45 @@ export const useProjectStore = defineStore('project', () => {
   // ==========================================================================
   
   /**
-   * 다이어그램 생성 (Understanding 단계용)
+   * 다이어그램 생성
    */
-  async function generateDiagram(classNames: string[]): Promise<void> {
+  async function generateDiagram(classes: Array<{ directory: string; className: string }>): Promise<void> {
     isProcessing.value = true
     currentStep.value = '다이어그램 생성 중...'
     
     try {
+      // 중복 제거 (모든 진입점에서 안전하게 처리)
+      const uniqueClasses = deduplicateClasses(classes)
+      const directories = uniqueClasses.map(c => c.directory)
+      const classNames = uniqueClasses.map(c => c.className)
+      
       const payload = {
         strategy: 'architecture' as const,
         target: 'mermaid',
         projectName: projectName.value,
-        classNames
+        directory: directories,
+        classNames: classNames
       }
       
+      // 서버 요청 payload 콘솔 출력
+      console.log('[Diagram Request] Payload:', JSON.stringify(payload, null, 2))
+      console.log('[Diagram Request] Classes:', classes)
+      
       await backendApi.convert(payload as any, sessionStore.getHeaders(), (event) => {
-        // 메시지는 그래프 탭 콘솔에 표시
         if (event.content) {
           addGraphMessage(event.type === 'error' ? 'error' : 'message', event.content)
         }
         
-        // 다이어그램 데이터 처리
         if (event.type === 'data' && event.file_type === 'mermaid_diagram') {
           diagramState.value.diagram = event.diagram || ''
           diagramState.value.classNames = classNames
+          ;(diagramState.value as any).classes = uniqueClasses
         }
         
-        // 완료/에러
         if (event.type === 'complete') {
           currentStep.value = '다이어그램 생성 완료'
         } else if (event.type === 'error') {
-              currentStep.value = `에러: ${event.content}`
+          currentStep.value = `에러: ${event.content}`
         }
       })
     } catch (error) {
@@ -524,14 +545,17 @@ export const useProjectStore = defineStore('project', () => {
   /**
    * 다이어그램 확장
    */
-  async function expandDiagram(className: string): Promise<void> {
+  async function expandDiagram(directory: string, className: string): Promise<void> {
     // 현재 상태 히스토리에 저장
+    const currentClasses = ((diagramState.value as any).classes as Array<{ directory: string; className: string }>) || []
     diagramState.value.history.push({
       diagram: diagramState.value.diagram,
       classNames: [...diagramState.value.classNames]
     })
     
-    await generateDiagram([...diagramState.value.classNames, className])
+    // 기존 클래스에 새 클래스 추가 (중복 제거는 generateDiagram에서 처리)
+    const updatedClasses = [...currentClasses, { directory, className }]
+    await generateDiagram(updatedClasses)
   }
   
   /**
