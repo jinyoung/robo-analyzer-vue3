@@ -263,7 +263,6 @@ const activateTab = (tabId: string) => {
             <div class="tree-section">
               <div class="section-header">
                 <h3 class="section-title">
-                  <span class="icon">📁</span>
                   파일 ({{ uploadedFiles.length }})
                 </h3>
               </div>
@@ -387,6 +386,7 @@ const activateTab = (tabId: string) => {
   padding: var(--spacing-md);
   gap: var(--spacing-md);
   overflow: hidden;
+  background: #ffffff;
 }
 
 .upload-main {

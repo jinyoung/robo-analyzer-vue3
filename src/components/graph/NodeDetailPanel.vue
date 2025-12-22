@@ -27,6 +27,8 @@ interface Props {
   relationshipStats?: Map<string, Stats>
   totalNodes?: number
   totalRelationships?: number
+  displayedNodes?: number  // 실제 표시된 노드 수
+  hiddenNodes?: number     // limit으로 숨겨진 노드 수
   isProcessing?: boolean
 }
 
@@ -53,6 +55,8 @@ const LONG_VALUE_THRESHOLD = 50
 const props = withDefaults(defineProps<Props>(), {
   totalNodes: 0,
   totalRelationships: 0,
+  displayedNodes: 0,
+  hiddenNodes: 0,
   isProcessing: false
 })
 
@@ -222,9 +226,16 @@ function toggleExpand(key: string): void {
           </div>
         </div>
         
-        <!-- 요약 -->
+        <!-- 요약 (하단 고정) -->
         <div class="display-summary">
-          Displaying {{ totalNodes }} nodes, {{ totalRelationships }} relationships.
+          <div class="summary-main">
+            <span class="summary-icon">📊</span>
+            <span>{{ displayedNodes || totalNodes }} 노드, {{ totalRelationships }} 관계</span>
+          </div>
+          <div class="summary-detail" v-if="hiddenNodes > 0">
+            <span class="hidden-badge">+{{ hiddenNodes }} 숨김</span>
+            <span class="hint">더블클릭으로 확장</span>
+          </div>
         </div>
       </div>
     </template>
@@ -389,13 +400,35 @@ function toggleExpand(key: string): void {
 .stats-wrapper {
   display: flex;
   flex-direction: column;
-  justify-content: center;
   flex: 1;
   min-height: 0;
+  overflow-y: auto; // 통계 섹션 스크롤 가능
+  overflow-x: hidden;
+  padding-right: 4px; // 스크롤바 공간 확보
+  
+  // 스크롤바 스타일링
+  &::-webkit-scrollbar {
+    width: 6px;
+  }
+  
+  &::-webkit-scrollbar-track {
+    background: #f1f5f9;
+    border-radius: 3px;
+  }
+  
+  &::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 3px;
+    
+    &:hover {
+      background: #94a3b8;
+    }
+  }
 }
 
 .stats-section {
   margin-bottom: 20px;
+  flex-shrink: 0; // 섹션이 축소되지 않도록
 }
 
 .section-title {
@@ -434,10 +467,46 @@ function toggleExpand(key: string): void {
 // ============================================================================
 
 .display-summary {
-  margin-top: 20px;
-  padding-top: 16px;
-  font-size: 12px;
-  color: #9ca3af;
+  margin-top: auto;
+  padding: 12px;
   border-top: 1px solid #e5e7eb;
+  flex-shrink: 0;
+  background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
+  
+  .summary-main {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #334155;
+    
+    .summary-icon {
+      font-size: 16px;
+    }
+  }
+  
+  .summary-detail {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 6px;
+    font-size: 11px;
+    
+    .hidden-badge {
+      padding: 2px 8px;
+      background: #fef3c7;
+      color: #92400e;
+      border-radius: 10px;
+      font-weight: 500;
+    }
+    
+    .hint {
+      color: #94a3b8;
+    }
+  }
 }
 </style>

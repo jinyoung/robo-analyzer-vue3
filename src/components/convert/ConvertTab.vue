@@ -1,4 +1,9 @@
 <script setup lang="ts">
+/**
+ * ConvertTab.vue
+ * 전환 탭 - 개선된 UI (밝은 중성 테마)
+ */
+
 import { ref, computed, watch } from 'vue'
 import { useProjectStore } from '@/stores/project'
 import { storeToRefs } from 'pinia'
@@ -16,19 +21,19 @@ const {
   frameworkSteps
 } = storeToRefs(projectStore)
 
-const activeFileTab = ref<string | null>(null)
-const showConsole = ref(true)
-const consoleHeight = ref(180)
+const selectedFile = ref<string | null>(null)
+const showConsole = ref(false)
+const showStepsPanel = ref(false)
+const showExplorer = ref(true)
+const expandedFolders = ref<Set<string>>(new Set(['']))
 
-const showCode = computed(() => 
-  convertedFiles.value.length > 0
-)
+const showCode = computed(() => convertedFiles.value.length > 0)
+
 const showSteps = computed(() =>
   convertTarget.value === 'java' || convertTarget.value === 'python' || 
   convertTarget.value === 'oracle' || convertTarget.value === 'postgresql'
 )
 
-// 상태 타입 계산
 const statusType = computed(() => {
   if (!currentStep.value) return 'idle'
   const lower = currentStep.value.toLowerCase()
@@ -38,27 +43,73 @@ const statusType = computed(() => {
   return 'idle'
 })
 
-// 시간 포맷
-const formatTime = (timestamp: string) => {
-  if (!timestamp) return ''
-  const date = new Date(timestamp)
-  return date.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-}
-
-const selectedFile = computed<ConvertedFile | null>(() => {
-  if (!activeFileTab.value) return null
-  return convertedFiles.value.find(f => f.fileName === activeFileTab.value) || null
+const currentFile = computed<ConvertedFile | null>(() => {
+  if (!selectedFile.value) return null
+  return convertedFiles.value.find(f => f.fileName === selectedFile.value) || null
 })
 
-// 첫 번째 파일을 자동 선택
-watch(convertedFiles, (files) => {
-  if (files.length > 0 && !activeFileTab.value) {
-    activeFileTab.value = files[0].fileName
+const fileTree = computed(() => {
+  const tree: Map<string, ConvertedFile[]> = new Map()
+  for (const file of convertedFiles.value) {
+    const parts = file.fileName.split('/')
+    const folder = parts.length > 1 ? parts.slice(0, -1).join('/') : ''
+    if (!tree.has(folder)) tree.set(folder, [])
+    tree.get(folder)!.push(file)
   }
-}, { immediate: true })
+  return tree
+})
 
-// Convert 실행
-const handleRunConvert = async () => {
+const sortedFolders = computed(() => Array.from(fileTree.value.keys()).sort())
+
+function formatTime(timestamp: string): string {
+  if (!timestamp) return ''
+  return new Date(timestamp).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+}
+
+function getFileLanguage(fileName: string): string {
+  const ext = fileName.split('.').pop()?.toLowerCase()
+  switch (ext) {
+    case 'java': return 'java'
+    case 'sql': return 'sql'
+    case 'xml': return 'xml'
+    case 'py': return 'python'
+    default: return 'plaintext'
+  }
+}
+
+function getFileIcon(fileName: string): string {
+  const ext = fileName.split('.').pop()?.toLowerCase()
+  switch (ext) {
+    case 'java': return '☕'
+    case 'sql': return '🗄️'
+    case 'xml': return '📋'
+    case 'py': return '🐍'
+    default: return '📄'
+  }
+}
+
+function getFolderName(path: string): string {
+  if (!path) return '/'
+  return path.split('/').pop() || '/'
+}
+
+function getFileName(fullPath: string): string {
+  return fullPath.split('/').pop() || fullPath
+}
+
+function toggleFolder(folder: string): void {
+  if (expandedFolders.value.has(folder)) {
+    expandedFolders.value.delete(folder)
+  } else {
+    expandedFolders.value.add(folder)
+  }
+}
+
+function selectFile(fileName: string): void {
+  selectedFile.value = fileName
+}
+
+async function handleRunConvert(): Promise<void> {
   try {
     await projectStore.runConvert()
   } catch (error) {
@@ -66,8 +117,7 @@ const handleRunConvert = async () => {
   }
 }
 
-// ZIP 다운로드
-const handleDownload = async () => {
+async function handleDownload(): Promise<void> {
   try {
     await projectStore.downloadZip()
   } catch (error) {
@@ -75,348 +125,587 @@ const handleDownload = async () => {
   }
 }
 
-// 파일 언어 감지
-const getFileLanguage = (fileName: string): string => {
-  const ext = fileName.split('.').pop()?.toLowerCase()
-  switch (ext) {
-    case 'java': return 'java'
-    case 'sql': return 'sql'
-    case 'xml': return 'xml'
-    case 'properties': return 'properties'
-    case 'json': return 'json'
-    case 'py': return 'python'
-    default: return 'plaintext'
+watch(convertedFiles, (files) => {
+  if (files.length > 0 && !selectedFile.value) {
+    selectedFile.value = files[0].fileName
   }
-}
-
-// 파일 아이콘
-const getFileIcon = (fileName: string): string => {
-  const ext = fileName.split('.').pop()?.toLowerCase()
-  switch (ext) {
-    case 'java': return '☕'
-    case 'sql': return '🗄️'
-    case 'xml': return '📋'
-    case 'properties': return '⚙️'
-    default: return '📄'
-  }
-}
+  files.forEach(f => {
+    const parts = f.fileName.split('/')
+    if (parts.length > 1) {
+      let path = ''
+      for (let i = 0; i < parts.length - 1; i++) {
+        path = path ? `${path}/${parts[i]}` : parts[i]
+        expandedFolders.value.add(path)
+      }
+    }
+  })
+}, { immediate: true })
 </script>
 
 <template>
   <div class="convert-tab">
-    <!-- 상단: 단계 표시 (있을 경우) -->
-    <div class="steps-section" v-if="showSteps">
-      <FrameworkSteps 
-        :steps="frameworkSteps"
-        :strategy="convertTarget"
-      />
-    </div>
-    
-    <!-- 메인 컨텐츠: 코드 결과 -->
-    <div class="main-content">
-      <!-- 코드 파일 탭 -->
-      <div class="code-section" v-if="showCode">
-        <div class="section-header">
-          <h3>📝 생성된 코드 ({{ convertedFiles.length }}개)</h3>
-          <button 
-            class="btn btn--primary btn--sm"
-            @click="handleDownload"
-            :disabled="isProcessing"
-          >
-            📦 ZIP 다운로드
-          </button>
-        </div>
-        
-        <div class="file-tabs">
-          <button 
-            v-for="file in convertedFiles" 
-            :key="file.fileName"
-            class="file-tab"
-            :class="{ active: activeFileTab === file.fileName }"
-            @click="activeFileTab = file.fileName"
-          >
-            <span class="tab-icon">{{ getFileIcon(file.fileName) }}</span>
-            <span class="tab-name" :title="file.fileName">{{ file.fileName }}</span>
-          </button>
-        </div>
-        
-        <div class="editor-container" v-if="selectedFile">
-          <CodeEditor 
-            :code="selectedFile.code"
-            :language="getFileLanguage(selectedFile.fileName)"
-            :fileName="selectedFile.fileName"
-          />
-        </div>
-      </div>
+    <!-- 메인 콘텐츠 -->
+    <div class="main-area">
+      <!-- 파일 탐색기 토글 -->
+      <button 
+        class="panel-toggle left"
+        :class="{ open: showExplorer }"
+        @click="showExplorer = !showExplorer"
+      >
+        {{ showExplorer ? '‹' : '›' }}
+      </button>
       
-      <!-- 빈 상태 -->
-      <div class="empty-state" v-if="!showCode">
-        <span class="empty-icon">⚡</span>
-        <h3>전환 결과가 없습니다</h3>
-        <p>Understanding 완료 후 Convert를 실행하세요</p>
-        <button 
-          class="btn btn--primary"
-          @click="handleRunConvert"
-          :disabled="isProcessing"
-        >
-          ▶️ Convert 실행
-        </button>
+      <!-- 파일 탐색기 -->
+      <Transition name="slide-left">
+        <div class="file-explorer" v-if="showExplorer">
+          <div class="explorer-header">
+            <span>파일</span>
+            <span class="count">{{ convertedFiles.length }}</span>
+          </div>
+          
+          <div class="explorer-content" v-if="showCode">
+            <div v-for="folder in sortedFolders" :key="folder" class="folder-group">
+              <div 
+                v-if="folder"
+                class="folder-item"
+                @click="toggleFolder(folder)"
+              >
+                <span>{{ expandedFolders.has(folder) ? '📂' : '📁' }}</span>
+                <span>{{ getFolderName(folder) }}</span>
+              </div>
+              
+              <div class="file-list" v-show="!folder || expandedFolders.has(folder)">
+                <div 
+                  v-for="file in fileTree.get(folder)" 
+                  :key="file.fileName"
+                  class="file-item"
+                  :class="{ active: selectedFile === file.fileName }"
+                  @click="selectFile(file.fileName)"
+                >
+                  <span class="icon">{{ getFileIcon(file.fileName) }}</span>
+                  <span class="name">{{ getFileName(file.fileName) }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <div class="explorer-empty" v-else>
+            <span>파일 없음</span>
+          </div>
+          
+          <div class="explorer-actions">
+            <button @click="handleRunConvert" :disabled="isProcessing">
+              Convert
+            </button>
+            <button @click="handleDownload" :disabled="isProcessing || !showCode">
+              📦 ZIP
+            </button>
+          </div>
+        </div>
+      </Transition>
+      
+      <!-- 코드 에디터 영역 -->
+      <div class="editor-area">
+        <template v-if="currentFile">
+          <div class="editor-header">
+            <span class="file-tab">
+              {{ getFileIcon(currentFile.fileName) }}
+              {{ getFileName(currentFile.fileName) }}
+            </span>
+            <span class="file-path">{{ currentFile.fileName }}</span>
+          </div>
+          <div class="editor-content">
+            <CodeEditor 
+              :code="currentFile.code"
+              :language="getFileLanguage(currentFile.fileName)"
+              :fileName="currentFile.fileName"
+            />
+          </div>
+        </template>
+        
+        <div class="editor-empty" v-else>
+          <div class="empty-content">
+            <span class="icon">⚡</span>
+            <h3>전환 결과가 없습니다</h3>
+            <p>Understanding 완료 후 Converting를 실행하세요</p>
+          </div>
+        </div>
       </div>
     </div>
     
-    <!-- 하단 콘솔 패널 -->
-    <div 
-      class="console-panel"
-      :class="{ collapsed: !showConsole }"
-      :style="{ height: showConsole ? `${consoleHeight}px` : '44px' }"
+    <!-- 플로팅: 단계 패널 토글 (우측) -->
+    <button 
+      v-if="showSteps && frameworkSteps.length > 0"
+      class="panel-toggle right"
+      :class="{ open: showStepsPanel }"
+      @click="showStepsPanel = !showStepsPanel"
     >
-      <!-- 콘솔 헤더 -->
-      <div class="console-header" @click="showConsole = !showConsole">
-        <div class="console-title">
-          <span class="console-icon" :class="statusType"></span>
-          <span>콘솔</span>
-          <span class="message-count" v-if="convertMessages.length">{{ convertMessages.length }}</span>
+      {{ showStepsPanel ? '›' : '‹' }}
+    </button>
+    
+    <!-- 플로팅: 단계 패널 (노드패널처럼 우측 슬라이드) -->
+    <Transition name="slide-right">
+      <div class="floating-panel right" v-if="showStepsPanel && showSteps">
+        <div class="panel-header">
+          <span>단계</span>
+          <button @click="showStepsPanel = false">✕</button>
         </div>
-        <div class="console-actions">
-          <button class="console-toggle">
-            {{ showConsole ? '▼' : '▲' }}
-          </button>
+        <div class="panel-body">
+          <FrameworkSteps :steps="frameworkSteps" :strategy="convertTarget" />
         </div>
       </div>
-      
-      <!-- 콘솔 내용 -->
-      <div class="console-body" v-show="showConsole">
-        <div class="log-entries">
+    </Transition>
+    
+    <!-- 플로팅: 콘솔 -->
+    <button 
+      class="console-toggle-btn"
+      :class="{ open: showConsole, [statusType]: true }"
+      @click="showConsole = !showConsole"
+    >
+      <span class="dot"></span>
+      콘솔
+      <span class="count" v-if="convertMessages.length">{{ convertMessages.length }}</span>
+      <span class="arrow">{{ showConsole ? '▼' : '▲' }}</span>
+    </button>
+    
+    <Transition name="slide-up">
+      <div class="floating-console" v-if="showConsole">
+        <div class="console-content">
           <div 
             v-for="(msg, idx) in convertMessages" 
             :key="idx"
-            class="log-entry"
+            class="log-item"
             :class="msg.type"
           >
-            <span class="log-time">{{ formatTime(msg.timestamp) }}</span>
-            <span class="log-icon" v-if="msg.type === 'error'">❌</span>
-            <span class="log-icon" v-else-if="msg.type === 'message'">💬</span>
-            <span class="log-text">{{ msg.content }}</span>
+            <span class="time">{{ formatTime(msg.timestamp) }}</span>
+            <span class="text">{{ msg.content }}</span>
           </div>
           <div class="log-empty" v-if="convertMessages.length === 0">
             로그가 없습니다
           </div>
         </div>
       </div>
-    </div>
+    </Transition>
   </div>
 </template>
 
 <style lang="scss" scoped>
+// ============================================================================
+// 기본 레이아웃 (밝은 중성 테마)
+// ============================================================================
+
 .convert-tab {
   flex: 1;
   display: flex;
-  flex-direction: column;
+  position: relative;
   overflow: hidden;
-  background: var(--color-bg-secondary);
+  background: #ffffff;
 }
 
-// 상단 단계 섹션
-.steps-section {
-  flex-shrink: 0;
-  padding: 8px 16px;
-  background: var(--color-bg-tertiary);
-  border-bottom: 1px solid var(--color-border);
-}
-
-// 메인 컨텐츠
-.main-content {
+.main-area {
   flex: 1;
   display: flex;
-  flex-direction: column;
-  padding: var(--spacing-md);
-  overflow: hidden;
+  position: relative;
 }
 
-.section-header {
+// ============================================================================
+// 파일 탐색기
+// ============================================================================
+
+.file-explorer {
+  width: 200px;
+  flex-shrink: 0;
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  background: #f8fafc;
+  border-right: 1px solid #cbd5e1;
+}
+
+.explorer-header {
+  display: flex;
   justify-content: space-between;
-  padding-bottom: var(--spacing-sm);
-  border-bottom: 1px solid var(--color-border);
-  flex-shrink: 0;
+  align-items: center;
+  padding: 8px 10px;
+  background: #f1f5f9;
+  border-bottom: 1px solid #cbd5e1;
+  font-size: 12px;
+  font-weight: 700;
+  color: #1e293b;
   
-  h3 {
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--color-text-primary);
+  .count {
+    padding: 2px 6px;
+    background: #e5e7eb;
+    border-radius: 8px;
+    font-size: 10px;
+    color: #6b7280;
   }
 }
 
-.code-section {
+.explorer-content {
   flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-md);
-  background: var(--color-bg-tertiary);
-  border-radius: var(--radius-md);
-  padding: var(--spacing-md);
-  overflow: hidden;
-  border: 1px solid var(--color-border);
+  overflow-y: auto;
+  padding: 4px 0;
 }
 
-.file-tabs {
-  display: flex;
-  gap: 2px;
-  overflow-x: auto;
-  padding-bottom: var(--spacing-sm);
-  flex-shrink: 0;
-  
-  &::-webkit-scrollbar {
-    height: 4px;
-  }
-}
-
-.file-tab {
+.folder-item {
   display: flex;
   align-items: center;
-  gap: var(--spacing-xs);
-  padding: var(--spacing-sm) var(--spacing-md);
+  gap: 6px;
+  padding: 5px 10px;
   font-size: 12px;
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  color: var(--color-text-secondary);
+  color: #374151;
   cursor: pointer;
-  white-space: nowrap;
-  transition: all var(--transition-fast);
+  font-weight: 500;
   
   &:hover {
-    background: var(--color-bg-elevated);
-    color: var(--color-text-primary);
+    background: #f3f4f6;
+  }
+}
+
+.file-list {
+  padding-left: 10px;
+}
+
+.file-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  font-size: 12px;
+  color: #6b7280;
+  cursor: pointer;
+  border-radius: 4px;
+  margin: 2px 4px;
+  
+  &:hover {
+    background: #f3f4f6;
+    color: #374151;
   }
   
   &.active {
-    background: var(--color-accent-primary);
-    color: white;
-    border-color: var(--color-accent-primary);
+    background: #dbeafe;
+    color: #1d4ed8;
+    font-weight: 600;
   }
   
-  .tab-icon {
-    font-size: 14px;
+  .icon {
+    font-size: 13px;
   }
   
-  .tab-name {
-    font-family: var(--font-mono);
+  .name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 }
 
-.editor-container {
-  flex: 1;
-  overflow: hidden;
-  border-radius: var(--radius-md);
-}
-
-.empty-state {
+.explorer-empty {
   flex: 1;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  text-align: center;
-  background: var(--color-bg-tertiary);
-  border-radius: var(--radius-md);
-  padding: var(--spacing-xl);
-  border: 1px solid var(--color-border);
+  color: #9ca3af;
+  font-size: 11px;
+}
+
+.explorer-actions {
+  display: flex;
+  gap: 4px;
+  padding: 6px;
+  background: #f1f5f9;
+  border-top: 1px solid #cbd5e1;
   
-  .empty-icon {
-    font-size: 64px;
-    margin-bottom: var(--spacing-lg);
-    opacity: 0.5;
-  }
-  
-  h3 {
-    font-size: 18px;
-    color: var(--color-text-secondary);
-    margin-bottom: var(--spacing-sm);
-  }
-  
-  p {
-    font-size: 14px;
-    color: var(--color-text-muted);
-    margin-bottom: var(--spacing-lg);
+  button {
+    flex: 1;
+    padding: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    background: #3b82f6;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    
+    &:hover:not(:disabled) {
+      background: #2563eb;
+    }
+    
+    &:last-child {
+      background: #f3f4f6;
+      color: #374151;
+      
+      &:hover:not(:disabled) {
+        background: #e5e7eb;
+      }
+    }
+    
+    &:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
   }
 }
 
-// 하단 콘솔 패널 - 밝은 블루 테마
-.console-panel {
-  flex-shrink: 0;
-  background: #eff6ff;
-  border-top: 2px solid #bfdbfe;
+// ============================================================================
+// 에디터 영역
+// ============================================================================
+
+.editor-area {
+  flex: 1;
   display: flex;
   flex-direction: column;
-  transition: height 0.25s ease;
-  overflow: hidden;
+  background: #ffffff;
+}
+
+.editor-header {
+  display: flex;
+  align-items: center;
+  padding: 6px 12px;
+  background: #f1f5f9;
+  border-bottom: 1px solid #cbd5e1;
   
-  &.collapsed {
-    height: 44px !important;
+  .file-tab {
+    padding: 5px 10px;
+    background: #ffffff;
+    border: 1px solid #cbd5e1;
+    border-bottom: none;
+    border-radius: 4px 4px 0 0;
+    font-size: 12px;
+    font-weight: 600;
+    color: #1e293b;
+  }
+  
+  .file-path {
+    margin-left: auto;
+    font-size: 10px;
+    color: #9ca3af;
+  }
+}
+
+.editor-content {
+  flex: 1;
+  overflow: hidden;
+}
+
+.editor-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  
+  .empty-content {
+    text-align: center;
     
-    .console-body {
-      display: none;
+    .icon {
+      font-size: 40px;
+      display: block;
+      margin-bottom: 12px;
+      opacity: 0.4;
+    }
+    
+    h3 {
+      font-size: 15px;
+      color: #374151;
+      margin-bottom: 6px;
+      font-weight: 600;
+    }
+    
+    p {
+      font-size: 12px;
+      color: #9ca3af;
+      margin-bottom: 16px;
+    }
+    
+    button {
+      padding: 8px 20px;
+      font-size: 12px;
+      font-weight: 600;
+      background: #3b82f6;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      
+      &:hover:not(:disabled) {
+        background: #2563eb;
+      }
+      
+      &:disabled {
+        opacity: 0.5;
+      }
     }
   }
 }
 
-.console-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 12px 16px;
-  height: 44px;
-  min-height: 44px;
-  background: linear-gradient(135deg, #dbeafe 0%, #eff6ff 100%);
+// ============================================================================
+// 패널 토글
+// ============================================================================
+
+.panel-toggle {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 18px;
+  height: 50px;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  font-size: 12px;
+  color: #64748b;
   cursor: pointer;
-  user-select: none;
-  border-bottom: 1px solid #bfdbfe;
+  z-index: 100;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
+  
+  &.left {
+    left: 0;
+    border-radius: 0 4px 4px 0;
+    border-left: none;
+    
+    &.open {
+      left: 200px;
+    }
+  }
+  
+  &.right {
+    right: 0;
+    border-radius: 4px 0 0 4px;
+    border-right: none;
+    
+    &.open {
+      right: 300px;
+    }
+  }
   
   &:hover {
-    background: linear-gradient(135deg, #bfdbfe 0%, #dbeafe 100%);
+    background: #f1f5f9;
+    color: #475569;
+    border-color: #94a3b8;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
   }
 }
 
-.console-title {
+// ============================================================================
+// 플로팅 단계 패널 (노드패널처럼)
+// ============================================================================
+
+.floating-panel {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 300px;
+  background: #ffffff;
+  border-left: 1px solid #cbd5e1;
   display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 13px;
-  font-weight: 600;
-  color: #1e40af;
+  flex-direction: column;
+  z-index: 90;
+  box-shadow: -4px 0 12px rgba(0, 0, 0, 0.1);
   
-  .console-icon {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    background: #60a5fa;
+  &.right {
+    right: 0;
+  }
+  
+  .panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 12px;
+    background: #f1f5f9;
+    border-bottom: 1px solid #cbd5e1;
     
-    &.error {
-      background: #ef4444;
-      box-shadow: 0 0 8px rgba(239, 68, 68, 0.4);
+    span {
+      font-size: 12px;
+      font-weight: 600;
+      color: #374151;
     }
-    &.processing {
-      background: #3b82f6;
-      box-shadow: 0 0 8px rgba(59, 130, 246, 0.4);
-      animation: pulse 1.5s infinite;
-    }
-    &.success {
-      background: #22c55e;
-      box-shadow: 0 0 8px rgba(34, 197, 94, 0.4);
+    
+    button {
+      width: 20px;
+      height: 20px;
+      background: transparent;
+      border: none;
+      color: #9ca3af;
+      cursor: pointer;
+      border-radius: 4px;
+      font-size: 12px;
+      
+      &:hover {
+        background: #e5e7eb;
+        color: #374151;
+      }
     }
   }
   
-  .message-count {
-    font-size: 11px;
-    padding: 2px 10px;
-    background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  .panel-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+  }
+}
+
+// ============================================================================
+// 플로팅 콘솔
+// ============================================================================
+
+.console-toggle-btn {
+  position: absolute;
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #374151;
+  cursor: pointer;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
+  z-index: 100;
+  
+  &:hover {
+    background: #f9fafb;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  }
+  
+  &.open {
+    bottom: 120px;
+  }
+  
+  .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #9ca3af;
+  }
+  
+  &.processing .dot {
+    background: #3b82f6;
+    animation: pulse 1.5s infinite;
+  }
+  
+  &.error .dot {
+    background: #ef4444;
+  }
+  
+  &.success .dot {
+    background: #22c55e;
+  }
+  
+  .count {
+    padding: 2px 6px;
+    background: #3b82f6;
     color: white;
-    border-radius: 12px;
-    font-family: var(--font-mono);
-    font-weight: 500;
-    box-shadow: 0 2px 4px rgba(59, 130, 246, 0.25);
+    border-radius: 8px;
+    font-size: 10px;
+    font-weight: 600;
+  }
+  
+  .arrow {
+    font-size: 10px;
+    color: #9ca3af;
   }
 }
 
@@ -425,95 +714,83 @@ const getFileIcon = (fileName: string): string => {
   50% { opacity: 0.4; }
 }
 
-.console-actions {
-  .console-toggle {
-    width: 28px;
-    height: 28px;
-    background: #ffffff;
-    border: 1px solid #93c5fd;
-    border-radius: 6px;
-    color: #3b82f6;
-    font-size: 12px;
-    cursor: pointer;
-    transition: all 0.15s;
-    
-    &:hover {
-      background: #dbeafe;
-      color: #1d4ed8;
-      border-color: #60a5fa;
-    }
-  }
-}
-
-.console-body {
-  flex: 1;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
+.floating-console {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 112px;
   background: #f8fafc;
-  border-top: 1px solid #e2e8f0;
-}
-
-.log-entries {
-  flex: 1;
-  overflow-y: auto;
-  padding: 12px 0;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 1.6;
-}
-
-.log-entry {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 6px 16px;
-  color: #475569;
-  transition: background 0.15s;
+  border-top: 2px solid #cbd5e1;
+  z-index: 90;
+  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.05);
   
-  &:hover {
-    background: rgba(0, 0, 0, 0.02);
+  .console-content {
+    height: 100%;
+    overflow-y: auto;
+    padding: 8px 12px;
+    font-family: 'Consolas', monospace;
+    font-size: 11px;
+    background: #ffffff;
+    margin: 4px;
+    border-radius: 4px;
+    border: 1px solid #e2e8f0;
   }
   
-  &.error {
-    color: #b91c1c;
-    background: rgba(239, 68, 68, 0.08);
-    border-left: 3px solid #ef4444;
+  .log-item {
+    display: flex;
+    gap: 10px;
+    padding: 3px 0;
+    color: #374151;
     
-    .log-time {
+    &.error {
       color: #dc2626;
     }
+    
+    .time {
+      color: #9ca3af;
+      flex-shrink: 0;
+    }
   }
   
-  &.message {
-    color: #1e293b;
-  }
-  
-  .log-time {
-    color: #94a3b8;
-    flex-shrink: 0;
-    min-width: 70px;
-  }
-  
-  .log-icon {
-    flex-shrink: 0;
-  }
-  
-  .log-text {
-    flex: 1;
-    word-break: break-word;
+  .log-empty {
+    color: #9ca3af;
+    text-align: center;
+    padding: 16px;
   }
 }
 
-.log-empty {
-  padding: 32px;
-  text-align: center;
-  color: #94a3b8;
-  font-size: 13px;
+// ============================================================================
+// 트랜지션
+// ============================================================================
+
+.slide-left-enter-active,
+.slide-left-leave-active {
+  transition: transform 0.2s ease;
 }
 
-.btn--sm {
-  padding: var(--spacing-xs) var(--spacing-sm);
-  font-size: 12px;
+.slide-left-enter-from,
+.slide-left-leave-to {
+  transform: translateX(-100%);
+}
+
+.slide-right-enter-active,
+.slide-right-leave-active {
+  transition: transform 0.2s ease;
+}
+
+.slide-right-enter-from,
+.slide-right-leave-to {
+  transform: translateX(100%);
+}
+
+.slide-up-enter-active,
+.slide-up-leave-active {
+  transition: transform 0.2s ease;
+}
+
+.slide-up-enter-from,
+.slide-up-leave-to {
+  transform: translateY(100%);
 }
 </style>

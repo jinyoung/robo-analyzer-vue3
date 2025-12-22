@@ -1,8 +1,14 @@
 <script setup lang="ts">
+/**
+ * TopToolbar.vue
+ * 상단 툴바 - 밝은 중성 테마 (msaez.io 스타일)
+ */
+
 import { ref } from 'vue'
 import { useSessionStore } from '@/stores/session'
 import { useProjectStore } from '@/stores/project'
 import { storeToRefs } from 'pinia'
+import SettingsModal from './SettingsModal.vue'
 import type { SourceType, ConvertTarget } from '@/types'
 
 const sessionStore = useSessionStore()
@@ -11,10 +17,9 @@ const projectStore = useProjectStore()
 const { sessionId } = storeToRefs(sessionStore)
 const { projectName, isProcessing, currentStep, sourceType, convertTarget } = storeToRefs(projectStore)
 
-const showApiKeyInput = ref(false)
-const localApiKey = ref('')
+const showSettings = ref(false)
+const nodeLimit = ref(parseInt(localStorage.getItem('nodeLimit') || '500'))
 
-// 소스 타입 옵션
 const sourceOptions: { value: SourceType; label: string; icon: string }[] = [
   { value: 'oracle', label: 'Oracle', icon: '🔶' },
   { value: 'postgresql', label: 'PostgreSQL', icon: '🐘' },
@@ -22,30 +27,12 @@ const sourceOptions: { value: SourceType; label: string; icon: string }[] = [
   { value: 'python', label: 'Python', icon: '🐍' }
 ]
 
-// 변환 타겟 옵션
 const targetOptions: { value: ConvertTarget; label: string; icon: string }[] = [
   { value: 'java', label: 'Spring Boot', icon: '🍃' },
   { value: 'python', label: 'FastAPI', icon: '⚡' },
   { value: 'oracle', label: 'Oracle', icon: '🔶' },
   { value: 'postgresql', label: 'PostgreSQL', icon: '🐘' }
 ]
-
-const copySessionId = async () => {
-  await navigator.clipboard.writeText(sessionId.value)
-}
-
-const handleNewSession = () => {
-  if (confirm('새 세션을 시작하시겠습니까? 현재 데이터가 초기화됩니다.')) {
-    sessionStore.createNewSession()
-    projectStore.reset()
-  }
-}
-
-const handleDeleteAll = async () => {
-  if (confirm('모든 데이터를 삭제하시겠습니까?')) {
-    await projectStore.deleteAllData()
-  }
-}
 
 const updateSourceType = (val: SourceType) => {
   projectStore.setSourceType(val)
@@ -55,59 +42,64 @@ const updateConvertTarget = (val: ConvertTarget) => {
   projectStore.setConvertTarget(val)
 }
 
-const updateApiKey = (val: string) => {
-  localApiKey.value = val
-  sessionStore.setApiKey(val)
+const copySessionId = async () => {
+  await navigator.clipboard.writeText(sessionId.value)
+}
+
+const handleNodeLimitChange = (value: number) => {
+  nodeLimit.value = value
+  localStorage.setItem('nodeLimit', String(value))
+  window.dispatchEvent(new CustomEvent('nodeLimitChange', { detail: value }))
+}
+
+const handleUmlDepthChange = (value: number) => {
+  localStorage.setItem('umlDepth', String(value))
+  window.dispatchEvent(new CustomEvent('umlDepthChange', { detail: value }))
 }
 </script>
 
 <template>
   <header class="top-toolbar">
-    <div class="toolbar-section toolbar-left">
-      <button class="logo" @click="sessionStore.goHome()" title="홈으로 이동">
-        <span class="logo-icon">⚡</span>
-        <span class="logo-text">Legacy Modernizer</span>
-      </button>
+    <button class="logo" @click="sessionStore.goHome()" title="홈으로 이동">
+      <span class="logo-icon">⚡</span>
+      <span class="logo-text">Legacy Modernizer</span>
+    </button>
+    
+    <div class="conversion-flow">
+      <select 
+        class="select" 
+        :value="sourceType"
+        @change="updateSourceType(($event.target as HTMLSelectElement).value as SourceType)"
+        title="소스 타입"
+      >
+        <option 
+          v-for="opt in sourceOptions" 
+          :key="opt.value" 
+          :value="opt.value"
+        >
+          {{ opt.icon }} {{ opt.label }}
+        </option>
+      </select>
+      
+      <span class="flow-arrow">→</span>
+      
+      <select 
+        class="select"
+        :value="convertTarget"
+        @change="updateConvertTarget(($event.target as HTMLSelectElement).value as ConvertTarget)"
+        title="타겟 타입"
+      >
+        <option 
+          v-for="opt in targetOptions" 
+          :key="opt.value" 
+          :value="opt.value"
+        >
+          {{ opt.icon }} {{ opt.label }}
+        </option>
+      </select>
     </div>
     
-    <div class="toolbar-section toolbar-center">
-      <!-- 변환 플로우: 소스 → 타겟 (컴팩트) -->
-      <div class="conversion-flow">
-        <span class="flow-label">소스</span>
-        <select 
-          class="select select--source" 
-          :value="sourceType"
-          @change="updateSourceType(($event.target as HTMLSelectElement).value as SourceType)"
-        >
-          <option 
-            v-for="opt in sourceOptions" 
-            :key="opt.value" 
-            :value="opt.value"
-          >
-            {{ opt.icon }} {{ opt.label }}
-          </option>
-        </select>
-        
-        <span class="flow-arrow">→</span>
-        
-        <span class="flow-label">타겟</span>
-        <select 
-          class="select select--target"
-          :value="convertTarget"
-          @change="updateConvertTarget(($event.target as HTMLSelectElement).value as ConvertTarget)"
-        >
-          <option 
-            v-for="opt in targetOptions" 
-            :key="opt.value" 
-            :value="opt.value"
-          >
-            {{ opt.icon }} {{ opt.label }}
-          </option>
-        </select>
-      </div>
-      
-      <div class="divider" v-if="projectName"></div>
-      
+    <div class="status-area">
       <div class="project-badge" v-if="projectName">
         <span class="project-icon">📁</span>
         <span class="project-name">{{ projectName }}</span>
@@ -115,261 +107,211 @@ const updateApiKey = (val: string) => {
       
       <div class="progress-indicator" v-if="isProcessing">
         <span class="spinner"></span>
-        <span>{{ currentStep }}</span>
+        <span class="step-text">{{ currentStep }}</span>
       </div>
     </div>
     
-    <div class="toolbar-section toolbar-right">
-      <div class="session-info">
-        <span class="session-label">Session:</span>
-        <code class="session-id" @click="copySessionId" title="클릭하여 복사">
-          {{ sessionId.slice(0, 8) }}...
-        </code>
-      </div>
+    <div class="actions">
+      <code class="session-id" @click="copySessionId" title="클릭하여 Session ID 복사">
+        {{ sessionId.slice(0, 8) }}
+      </code>
       
       <button 
-        class="btn btn--icon" 
-        @click="showApiKeyInput = !showApiKeyInput"
-        title="API Key 설정"
+        class="settings-btn" 
+        @click="showSettings = true"
+        title="설정"
       >
-        🔑
+        ⚙️
       </button>
-      
-      <button 
-        class="btn btn--secondary" 
-        @click="handleNewSession"
-        title="새 세션"
-      >
-        🔄 새 세션
-      </button>
-      
-      <button 
-        class="btn btn--danger" 
-        @click="handleDeleteAll"
-        :disabled="isProcessing"
-        title="전체 삭제"
-      >
-        🗑️
-      </button>
-    </div>
-    
-    <!-- API Key Input Panel -->
-    <div class="api-key-panel" v-if="showApiKeyInput">
-      <input 
-        type="password"
-        class="input"
-        placeholder="OpenAI API Key"
-        :value="localApiKey"
-        @input="updateApiKey(($event.target as HTMLInputElement).value)"
-      />
-      <button class="btn btn--secondary" @click="showApiKeyInput = false">닫기</button>
     </div>
   </header>
+  
+  <SettingsModal 
+    :is-open="showSettings"
+    @close="showSettings = false"
+    @update:node-limit="handleNodeLimitChange"
+    @update:uml-depth="handleUmlDepthChange"
+  />
 </template>
 
 <style lang="scss" scoped>
+// 밝은 중성 테마 툴바 (msaez.io 스타일)
 .top-toolbar {
   display: flex;
   align-items: center;
-  gap: var(--spacing-lg);
-  padding: var(--spacing-sm) var(--spacing-lg);
-  background: var(--color-bg-secondary);
-  border-bottom: 1px solid var(--color-border);
-  position: relative;
-  z-index: 100;
-}
-
-.toolbar-section {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-md);
-}
-
-.toolbar-left {
-  flex-shrink: 0;
-}
-
-.toolbar-center {
-  flex: 1;
-  justify-content: center;
-  gap: var(--spacing-lg);
-}
-
-.conversion-flow {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-  padding: 4px 10px;
-  background: var(--color-bg-tertiary);
-  border-radius: var(--radius-md);
-  border: 1px solid var(--color-border);
-}
-
-.flow-item {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.flow-label {
-  font-size: 10px;
-  color: var(--color-text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.3px;
-  font-weight: 500;
-}
-
-.flow-arrow {
-  font-size: 14px;
-  color: var(--color-accent-primary);
-  font-weight: bold;
-  margin: 0 2px;
-}
-
-.select--source,
-.select--target {
-  min-width: 110px;
-  padding: 4px 8px;
-  font-size: 12px;
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  color: var(--color-text-primary);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-  
-  &:hover {
-    border-color: var(--color-accent-primary);
-  }
-  
-  &:focus {
-    outline: none;
-    border-color: var(--color-accent-primary);
-    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
-  }
-}
-
-.divider {
-  width: 1px;
-  height: 24px;
-  background: var(--color-border);
-}
-
-.project-badge {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 10px;
-  background: rgba(59, 130, 246, 0.1);
-  border-radius: var(--radius-sm);
-  border: 1px solid rgba(59, 130, 246, 0.2);
-}
-
-.project-icon {
-  font-size: 12px;
-}
-
-.toolbar-right {
-  flex-shrink: 0;
+  gap: 16px;
+  height: 48px;
+  padding: 0 16px;
+  background: #ffffff;
+  border-bottom: 1px solid #e5e7eb;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
 }
 
 .logo {
   display: flex;
   align-items: center;
-  gap: var(--spacing-sm);
-  font-weight: 700;
-  font-size: 16px;
+  gap: 8px;
   background: none;
   border: none;
   cursor: pointer;
-  padding: var(--spacing-xs) var(--spacing-sm);
-  border-radius: var(--radius-md);
-  transition: all var(--transition-fast);
+  padding: 6px 10px;
+  border-radius: 8px;
+  transition: all 0.15s;
   
   &:hover {
-    background: var(--color-bg-tertiary);
-    transform: scale(1.02);
+    background: #f3f4f6;
   }
   
   .logo-icon {
-    font-size: 20px;
+    font-size: 18px;
   }
   
   .logo-text {
-    background: linear-gradient(135deg, var(--color-accent-primary), var(--color-accent-tertiary));
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
+    font-size: 14px;
+    font-weight: 700;
+    color: #1f2937;
+    letter-spacing: -0.3px;
   }
 }
 
-.project-name {
-  font-family: var(--font-mono);
-  font-size: 13px;
-  color: var(--color-accent-primary);
-  font-weight: 500;
+.conversion-flow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: #f9fafb;
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+}
+
+.select {
+  padding: 4px 8px;
+  font-size: 12px;
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  color: #1e293b;
+  cursor: pointer;
+  transition: all 0.15s;
+  
+  &:hover {
+    border-color: #9ca3af;
+  }
+  
+  &:focus {
+    outline: none;
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+  }
+}
+
+.flow-arrow {
+  font-size: 12px;
+  color: #6b7280;
+  font-weight: bold;
+}
+
+.status-area {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.project-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: #f3f4f6;
+  border-radius: 6px;
+  border: 1px solid #e5e7eb;
+  
+  .project-icon {
+    font-size: 12px;
+  }
+  
+  .project-name {
+    font-size: 12px;
+    font-weight: 500;
+    color: #374151;
+    max-width: 150px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
 
 .progress-indicator {
   display: flex;
   align-items: center;
-  gap: var(--spacing-sm);
-  padding: var(--spacing-xs) var(--spacing-md);
-  background: rgba(59, 130, 246, 0.1);
-  border-radius: var(--radius-md);
-  color: var(--color-accent-primary);
-  font-size: 13px;
+  gap: 8px;
+  padding: 4px 10px;
+  background: #f3f4f6;
+  border-radius: 6px;
+  
+  .spinner {
+    width: 12px;
+    height: 12px;
+    border: 2px solid #d1d5db;
+    border-top-color: #3b82f6;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+  }
+  
+  .step-text {
+    font-size: 11px;
+    color: #6b7280;
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
 
-.spinner {
-  width: 14px;
-  height: 14px;
-  border: 2px solid transparent;
-  border-top-color: var(--color-accent-primary);
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
-.session-info {
+.actions {
   display: flex;
   align-items: center;
-  gap: var(--spacing-sm);
-  font-size: 12px;
+  gap: 8px;
+}
+
+.session-id {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: #6b7280;
+  padding: 4px 8px;
+  background: #f3f4f6;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
   
-  .session-label {
-    color: var(--color-text-muted);
-  }
-  
-  .session-id {
-    font-family: var(--font-mono);
-    padding: 2px 6px;
-    background: var(--color-bg-tertiary);
-    border-radius: var(--radius-sm);
-    cursor: pointer;
-    transition: background var(--transition-fast);
-    
-    &:hover {
-      background: var(--color-bg-elevated);
-    }
+  &:hover {
+    background: #e5e7eb;
+    color: #374151;
   }
 }
 
-.api-key-panel {
-  position: absolute;
-  top: 100%;
-  right: var(--spacing-lg);
+.settings-btn {
+  width: 32px;
+  height: 32px;
   display: flex;
-  gap: var(--spacing-sm);
-  padding: var(--spacing-md);
-  background: var(--color-bg-elevated);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-lg);
-  animation: slideUp var(--transition-fast);
+  align-items: center;
+  justify-content: center;
+  background: #f3f4f6;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  font-size: 16px;
+  cursor: pointer;
+  transition: all 0.15s;
   
-  .input {
-    width: 300px;
+  &:hover {
+    background: #e5e7eb;
+    transform: rotate(45deg);
   }
 }
 </style>
-

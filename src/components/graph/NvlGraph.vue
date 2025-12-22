@@ -45,6 +45,9 @@ const BATCH_SIZE = 20
 /** 배치 간 대기 시간 (ms) */
 const BATCH_INTERVAL = 1000
 
+/** 최대 표시 노드 개수 (성능 최적화) */
+const MAX_DISPLAY_NODES = 500
+
 /** NVL 렌더러 옵션 */
 const NVL_OPTIONS = {
   initialZoom: 1.0,
@@ -84,6 +87,11 @@ const isInitializing = ref(false)
 const loadingProgress = ref(0)
 const isLoadingBatch = ref(false)
 const pendingNodeCount = ref(0)
+
+// 노드 limit 관련 상태
+const totalNodeCount = ref(0)        // 전체 노드 수
+const hiddenNodeCount = ref(0)       // 숨겨진 노드 수 (limit 초과)
+const isLimitApplied = ref(false)    // limit 적용 여부
 
 // 통계 데이터
 const nodeStats = ref<Map<string, NodeStat>>(new Map())
@@ -319,14 +327,24 @@ function enqueueRelationships(rels: NvlRelationship[]): void {
 // ============================================================================
 
 /**
- * 그래프 데이터 동기화 (props → 내부 맵)
+ * 그래프 데이터 동기화 (props → 내부 맵, 노드 limit 적용)
  */
 function syncGraphData(data: GraphData): { newNodes: NvlNode[]; newRels: NvlRelationship[] } {
   const newNodes: NvlNode[] = []
   const newRels: NvlRelationship[] = []
   
-  // 노드 처리
-  for (const node of data.nodes) {
+  // 전체 노드 수 저장
+  totalNodeCount.value = data.nodes.length
+  
+  // 노드 limit 적용
+  const limitedNodes = data.nodes.slice(0, MAX_DISPLAY_NODES)
+  const displayedNodeIds = new Set(limitedNodes.map(n => n.id))
+  
+  hiddenNodeCount.value = Math.max(0, data.nodes.length - MAX_DISPLAY_NODES)
+  isLimitApplied.value = data.nodes.length > MAX_DISPLAY_NODES
+  
+  // 노드 처리 (limit 적용)
+  for (const node of limitedNodes) {
     const nvlNode = toNvlNode(node)
     const existing = nodeMap.get(node.id)
     
@@ -336,9 +354,15 @@ function syncGraphData(data: GraphData): { newNodes: NvlNode[]; newRels: NvlRela
     }
   }
   
-  // 관계 처리 (누락된 노드는 플레이스홀더로 생성)
+  // 관계 처리 (표시된 노드 간의 관계만)
   for (const link of data.links) {
-    // 소스 노드 확인
+    // 양쪽 노드가 모두 표시되는 경우에만 관계 추가
+    const sourceDisplayed = displayedNodeIds.has(link.source) || nodeMap.has(link.source)
+    const targetDisplayed = displayedNodeIds.has(link.target) || nodeMap.has(link.target)
+    
+    if (!sourceDisplayed || !targetDisplayed) continue
+    
+    // 소스 노드 확인 (플레이스홀더)
     if (!nodeMap.has(link.source)) {
       const placeholder = createPlaceholderNode(link.source)
       nodeMap.set(link.source, placeholder)
@@ -604,7 +628,11 @@ defineExpose({
   relationshipCount: () => relationshipMap.size,
   loadingProgress,
   isLoadingBatch,
-  pendingNodeCount
+  pendingNodeCount,
+  // 노드 limit 관련
+  totalNodeCount,
+  hiddenNodeCount,
+  isLimitApplied
 })
 </script>
 
@@ -627,6 +655,17 @@ defineExpose({
           노드 렌더링 중... {{ loadingProgress }}%
           <span v-if="pendingNodeCount > 0">(대기: {{ pendingNodeCount }}개)</span>
         </span>
+      </div>
+    </Transition>
+    
+    <!-- 노드 limit 알림 (간소화) -->
+    <Transition name="slide-up">
+      <div v-if="isLimitApplied" class="limit-notice">
+        <span class="notice-icon">📊</span>
+        <span class="notice-text">
+          limit {{ MAX_DISPLAY_NODES.toLocaleString() }}개만 표시 중
+        </span>
+        <span class="notice-hint">설정에서 변경 · 더블클릭으로 확장</span>
       </div>
     </Transition>
   </div>
@@ -707,6 +746,40 @@ defineExpose({
   font-family: var(--font-mono);
 }
 
+// 노드 limit 알림 (컴팩트)
+.limit-notice {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: rgba(30, 41, 59, 0.85);
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  border-radius: 8px;
+  backdrop-filter: blur(8px);
+  z-index: 100;
+  
+  .notice-icon {
+    font-size: 14px;
+  }
+  
+  .notice-text {
+    font-size: 12px;
+    font-weight: 500;
+    color: #f1f5f9;
+  }
+  
+  .notice-hint {
+    font-size: 10px;
+    color: #94a3b8;
+    padding-left: 6px;
+    border-left: 1px solid rgba(148, 163, 184, 0.3);
+    margin-left: 2px;
+  }
+}
+
 // 트랜지션
 .fade-enter-active,
 .fade-leave-active {
@@ -716,5 +789,16 @@ defineExpose({
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
+}
+
+.slide-up-enter-active,
+.slide-up-leave-active {
+  transition: all 0.3s ease;
+}
+
+.slide-up-enter-from,
+.slide-up-leave-to {
+  opacity: 0;
+  transform: translateX(-50%) translateY(-20px);
 }
 </style>

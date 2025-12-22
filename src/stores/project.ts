@@ -22,11 +22,12 @@ import type {
   GraphNode,
   GraphLink,
   ConvertedFile,
-  DiagramState,
   Neo4jNode,
   Neo4jRelationship,
   StreamMessage
 } from '@/types'
+
+// UML 다이어그램은 이제 VueFlow로 로컬에서 처리 (서버 API 요청 제거)
 import { useSessionStore } from './session'
 import { antlrApi, backendApi } from '@/services/api'
 
@@ -96,18 +97,7 @@ function createInitialSteps(strategy: Strategy): { step: number; done: boolean }
   return Array.from({ length: 5 }, (_, i) => ({ step: i + 1, done: false }))
 }
 
-/**
- * 클래스 목록에서 중복 제거 (directory + className 기준)
- */
-function deduplicateClasses(classes: Array<{ directory: string; className: string }>): Array<{ directory: string; className: string }> {
-  const seen = new Set<string>()
-  return classes.filter(c => {
-    const key = `${c.directory}::${c.className}`
-    if (seen.has(key)) return false
-    seen.add(key)
-    return true
-  })
-}
+// [REMOVED] deduplicateClasses - UML은 이제 VueFlow로 로컬 처리
 
 // ============================================================================
 // 스토어 정의
@@ -145,11 +135,6 @@ export const useProjectStore = defineStore('project', () => {
   // ==========================================================================
   
   const convertedFiles = ref<ConvertedFile[]>([])
-  const diagramState = ref<DiagramState>({
-    diagram: '',
-    classNames: [],
-    history: []
-  })
   
   // ==========================================================================
   // 상태 - 프로세스
@@ -260,16 +245,6 @@ export const useProjectStore = defineStore('project', () => {
     convertMessages.value = []
   }
   
-  // ==========================================================================
-  // 내부 함수 - 다이어그램
-  // ==========================================================================
-  
-  /**
-   * 다이어그램 상태 초기화
-   */
-  function resetDiagramState(): void {
-    diagramState.value = { diagram: '', classNames: [], history: [] }
-  }
   
   // ==========================================================================
   // Actions - Setters
@@ -351,7 +326,6 @@ export const useProjectStore = defineStore('project', () => {
     
     clearGraphMessages()
     clearGraphData()
-    resetDiagramState()
     
     try {
       await backendApi.cypherQuery(
@@ -428,12 +402,7 @@ export const useProjectStore = defineStore('project', () => {
               break
         
             case 'data':
-              if (event.file_type === 'mermaid_diagram') {
-                diagramState.value.diagram = event.diagram || ''
-                if (classNames) {
-                  diagramState.value.classNames = classNames
-                }
-              } else if (event.code && event.file_name) {
+        if (event.code && event.file_name) {
           updateConvertedFile(event)
         }
         break
@@ -489,90 +458,6 @@ export const useProjectStore = defineStore('project', () => {
   }
   
   // ==========================================================================
-  // Actions - 다이어그램
-  // ==========================================================================
-  
-  /**
-   * 다이어그램 생성
-   */
-  async function generateDiagram(classes: Array<{ directory: string; className: string }>): Promise<void> {
-    isProcessing.value = true
-    currentStep.value = '다이어그램 생성 중...'
-    
-    try {
-      // 중복 제거 (모든 진입점에서 안전하게 처리)
-      const uniqueClasses = deduplicateClasses(classes)
-      const directories = uniqueClasses.map(c => c.directory)
-      const classNames = uniqueClasses.map(c => c.className)
-      
-      const payload = {
-        strategy: 'architecture' as const,
-        target: 'mermaid',
-        projectName: projectName.value,
-        directory: directories,
-        classNames: classNames
-      }
-      
-      // 서버 요청 payload 콘솔 출력
-      console.log('[Diagram Request] Payload:', JSON.stringify(payload, null, 2))
-      console.log('[Diagram Request] Classes:', classes)
-      
-      await backendApi.convert(payload as any, sessionStore.getHeaders(), (event) => {
-        if (event.content) {
-          addGraphMessage(event.type === 'error' ? 'error' : 'message', event.content)
-        }
-        
-        if (event.type === 'data' && event.file_type === 'mermaid_diagram') {
-          diagramState.value.diagram = event.diagram || ''
-          diagramState.value.classNames = classNames
-          ;(diagramState.value as any).classes = uniqueClasses
-        }
-        
-        if (event.type === 'complete') {
-          currentStep.value = '다이어그램 생성 완료'
-        } else if (event.type === 'error') {
-          currentStep.value = `에러: ${event.content}`
-        }
-      })
-    } catch (error) {
-      currentStep.value = '다이어그램 생성 실패'
-      throw error
-    } finally {
-      isProcessing.value = false
-    }
-  }
-  
-  /**
-   * 다이어그램 확장
-   */
-  async function expandDiagram(directory: string, className: string): Promise<void> {
-    // 현재 상태 히스토리에 저장
-    const currentClasses = ((diagramState.value as any).classes as Array<{ directory: string; className: string }>) || []
-    diagramState.value.history.push({
-      diagram: diagramState.value.diagram,
-      classNames: [...diagramState.value.classNames]
-    })
-    
-    // 기존 클래스에 새 클래스 추가 (중복 제거는 generateDiagram에서 처리)
-    const updatedClasses = [...currentClasses, { directory, className }]
-    await generateDiagram(updatedClasses)
-  }
-  
-  /**
-   * 다이어그램 축소 (이전 상태로 복원)
-   */
-  function collapseDiagram(): void {
-    const previous = diagramState.value.history.pop()
-    if (previous) {
-      diagramState.value.diagram = previous.diagram
-      diagramState.value.classNames = previous.classNames
-    }
-  }
-  
-  // (시스템 개념 제거) 업로드 이후 추가/이동/삭제는 "업로드 설정 모달"에서 수행하고,
-  // 백엔드는 업로드된 폴더 구조를 기준으로 처리합니다.
-  
-  // ==========================================================================
   // Actions - 기타
   // ==========================================================================
   
@@ -618,7 +503,6 @@ export const useProjectStore = defineStore('project', () => {
     
     // 변환 결과
     convertedFiles.value = []
-    resetDiagramState()
     
     // 프로세스
     isProcessing.value = false
@@ -646,7 +530,6 @@ export const useProjectStore = defineStore('project', () => {
     uploadedDdlFiles,
     graphData,
     convertedFiles,
-    diagramState,
     isProcessing,
     currentStep,
     graphMessages,
@@ -679,12 +562,6 @@ export const useProjectStore = defineStore('project', () => {
     runUnderstanding,
     runConvert,
     
-    // Actions - Diagram
-    generateDiagram,
-    expandDiagram,
-    collapseDiagram,
-    
-    // Actions - System/File Management
     // Actions - Misc
     downloadZip,
     deleteAllData,

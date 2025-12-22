@@ -34,7 +34,6 @@ const setActive = (tabId: string) => {
       </button>
     </div>
     <div class="tab-content">
-      <!-- v-show를 사용하여 컴포넌트 언마운트 없이 탭 전환 (그래프 유지) -->
       <div 
         v-for="tab in tabs" 
         :key="tab.id" 
@@ -49,58 +48,70 @@ const setActive = (tabId: string) => {
 </template>
 
 <style lang="scss" scoped>
+// 모던하고 미니멀한 탭 디자인
 .tab-container {
   flex: 1;
   display: flex;
   flex-direction: column;
-  background: var(--color-bg-secondary);
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--color-border);
   overflow: hidden;
+  background: #ffffff;
 }
 
 .tab-header {
   display: flex;
-  gap: 2px;
-  padding: var(--spacing-sm);
-  background: var(--color-bg-tertiary);
-  border-bottom: 1px solid var(--color-border);
+  gap: 0;
+  padding: 0 16px;
+  background: #ffffff;
+  border-bottom: 1px solid #e5e7eb;
+  min-height: 48px;
 }
 
 .tab-button {
   display: flex;
   align-items: center;
-  gap: var(--spacing-sm);
-  padding: var(--spacing-sm) var(--spacing-lg);
+  gap: 8px;
+  padding: 0 20px;
   font-size: 14px;
   font-weight: 500;
-  color: var(--color-text-secondary);
+  color: #94a3b8;
   background: transparent;
   border: none;
-  border-radius: var(--radius-md);
+  border-bottom: 2px solid transparent;
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition: all 0.2s ease;
+  position: relative;
+  margin-bottom: -1px;
   
-  &:hover {
-    color: var(--color-text-primary);
-    background: var(--color-bg-elevated);
+  &:hover:not(.active) {
+    color: #64748b;
   }
   
   &.active {
-    color: var(--color-accent-primary);
-    background: var(--color-bg-secondary);
-    box-shadow: 0 0 10px rgba(59, 130, 246, 0.2);
+    color: #0f172a;
+    font-weight: 600;
+    border-bottom-color: #3b82f6;
+    
+    .tab-icon {
+      opacity: 1;
+    }
   }
 }
 
 .tab-icon {
   font-size: 16px;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+}
+
+.tab-label {
+  letter-spacing: -0.01em;
 }
 
 .tab-content {
   flex: 1;
   display: flex;
   overflow: hidden;
+  background: #ffffff;
 }
 
 .tab-panel {
@@ -108,10 +119,5 @@ const setActive = (tabId: string) => {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  
-  &.active {
-    animation: fadeIn var(--transition-normal);
-  }
 }
 </style>
-

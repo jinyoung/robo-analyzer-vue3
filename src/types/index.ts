@@ -14,7 +14,7 @@ export type SourceType = 'oracle' | 'postgresql' | 'java' | 'python'
 export type ConvertTarget = 'oracle' | 'postgresql' | 'java' | 'python'
 
 /** 백엔드 전략 타입 */
-export type Strategy = 'dbms' | 'framework' | 'architecture'
+export type Strategy = 'dbms' | 'framework'
 
 // ============================================================================
 // 프로젝트 메타데이터
@@ -134,21 +134,8 @@ export interface NvlRelationship {
 }
 
 // ============================================================================
-// 다이어그램
+// 다이어그램 (VueFlow 기반)
 // ============================================================================
-
-/** 다이어그램 히스토리 항목 */
-export interface DiagramHistoryItem {
-  diagram: string
-  classNames: string[]
-}
-
-/** 다이어그램 상태 */
-export interface DiagramState {
-  diagram: string
-  classNames: string[]
-  history: DiagramHistoryItem[]
-}
 
 /** 클래스 정보 (다이어그램 검색용) */
 export interface ClassInfo {
@@ -190,7 +177,6 @@ export interface StreamEvent {
   file_name?: string
   directory?: string
   code?: string
-  diagram?: string
   
   // 진행 상태 (status 이벤트용)
   step?: number
@@ -222,4 +208,20 @@ export interface ParseResponse {
 /** 삭제 응답 */
 export interface DeleteResponse {
   message: string
+}
+
+// ============================================================================
+// VueFlow UML 클래스 다이어그램
+// ============================================================================
+
+/** UML 클래스 다이어그램에서 선택된 클래스 정보 */
+export interface SelectedClassInfo {
+  className: string
+  directory: string
+}
+
+/** UML 클래스 다이어그램 상태 */
+export interface UmlDiagramState {
+  selectedClasses: SelectedClassInfo[]
+  depth: number
 }

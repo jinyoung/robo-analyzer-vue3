@@ -24,7 +24,6 @@ import { RouterView } from 'vue-router'
   flex: 1;
   display: flex;
   overflow: hidden;
-  padding: var(--spacing-md);
 }
 </style>
 

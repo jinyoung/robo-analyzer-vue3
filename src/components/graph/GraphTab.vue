@@ -1,28 +1,17 @@
 <script setup lang="ts">
 /**
  * GraphTab.vue
- * 그래프 및 UML 다이어그램 탭 컴포넌트
- * 
- * 주요 기능:
- * - Neo4j NVL 그래프 시각화
- * - UML 다이어그램 생성 및 표시
- * - 클래스/인터페이스 검색
- * - 노드 상세 패널
- * - 콘솔 로그 표시
+ * 그래프 및 UML 다이어그램 탭 - 개선된 플로팅 UI
  */
 
 import { ref, computed, watch } from 'vue'
 import { useProjectStore } from '@/stores/project'
 import { storeToRefs } from 'pinia'
-import { useResize } from '@/composables/useResize'
 import NvlGraph from './NvlGraph.vue'
 import NodeDetailPanel from './NodeDetailPanel.vue'
-import MermaidDiagram from '../convert/MermaidDiagram.vue'
+import VueFlowClassDiagram from './VueFlowClassDiagram.vue'
+import { getClassName, getDirectory, isClassNode } from '@/utils/classDiagram'
 import type { GraphNode } from '@/types'
-
-// ============================================================================
-// Store 연결
-// ============================================================================
 
 const projectStore = useProjectStore()
 const { 
@@ -30,117 +19,45 @@ const {
   isProcessing, 
   currentStep, 
   sourceType,
-  diagramState,
   graphMessages
 } = storeToRefs(projectStore)
 
-// ============================================================================
-// 상수 정의
-// ============================================================================
-
-/** 검색 결과 최대 표시 개수 */
 const MAX_SEARCH_RESULTS = 8
-
-/** 클래스/인터페이스 라벨 목록 */
 const CLASS_LABELS = ['Class', 'CLASS', 'Interface', 'INTERFACE']
 
-// ============================================================================
-// 리사이즈 Composables
-// ============================================================================
-
-/** 노드 패널 리사이즈 (가로) */
-const { 
-  value: panelWidth, 
-  isResizing, 
-  startResize 
-} = useResize({
-  direction: 'horizontal',
-  initialValue: 380,
-  min: 280,
-  max: 600
-})
-
-/** 콘솔 패널 리사이즈 (세로) */
-const { 
-  value: consoleHeight, 
-  isResizing: isConsoleResizing, 
-  startResize: startConsoleResize 
-} = useResize({
-  direction: 'vertical',
-  initialValue: 180,
-  min: 100,
-  max: 500
-})
-
-// ============================================================================
-// 상태 - UI 제어
-// ============================================================================
-
-/** 서브 탭: 그래프 또는 UML */
 const activeView = ref<'graph' | 'uml'>('graph')
+const showNodePanel = ref(false)
+const showConsole = ref(false)
+const showSearch = ref(false)
 
-/** 노드 상세 패널 표시 여부 */
-const showNodePanel = ref(true)
-
-/** 콘솔 패널 표시 여부 */
-const showConsole = ref(true)
-
-
-// ============================================================================
-// 상태 - 데이터
-// ============================================================================
-
-/** 검색 쿼리 */
 const searchQuery = ref('')
-
-/** 선택된 노드 */
 const selectedNode = ref<GraphNode | null>(null)
-
-/** NvlGraph 컴포넌트 참조 */
 const nvlGraphRef = ref<InstanceType<typeof NvlGraph> | null>(null)
+const diagramDepth = ref(3)
+const selectedClasses = ref<Array<{ className: string; directory: string }>>([])
+const showDepthSlider = ref(false)
 
-// ============================================================================
-// Computed - 파생 상태
-// ============================================================================
-
-/** 현재 상태 타입 (UI 표시용) */
 const statusType = computed(() => {
   if (!currentStep.value) return 'idle'
-  
   const step = currentStep.value.toLowerCase()
   if (step.includes('에러') || step.includes('실패') || step.includes('error')) return 'error'
   if (step.includes('완료') || step.includes('complete')) return 'success'
   if (isProcessing.value) return 'processing'
-  
   return 'idle'
 })
 
-/** 그래프 데이터 존재 여부 */
-const hasGraph = computed(() => 
-  graphData.value?.nodes.length > 0
-)
+const hasGraph = computed(() => graphData.value?.nodes.length > 0)
+const showUmlTab = computed(() => sourceType.value === 'java' || sourceType.value === 'python')
+const hasUmlDiagram = computed(() => selectedClasses.value.length > 0)
 
-/** UML 탭 표시 조건 (java/python 소스만) */
-const showUmlTab = computed(() => 
-  sourceType.value === 'java' || sourceType.value === 'python'
-)
-
-/** UML 다이어그램 존재 여부 */
-const hasUmlDiagram = computed(() => 
-  Boolean(diagramState.value?.diagram)
-)
-
-/** 클래스/인터페이스 노드 검색 결과 */
 const filteredNodes = computed(() => {
   const query = searchQuery.value.trim().toLowerCase()
   if (!graphData.value || !query) return []
   
   return graphData.value.nodes.filter(node => {
-    // 클래스/인터페이스만 검색
     const labels = node.labels || []
     if (!labels.some(label => CLASS_LABELS.includes(label))) return false
     
-    // name 또는 class_name으로 검색
     const name = ((node.properties?.name as string) || '').toLowerCase()
     const className = ((node.properties?.class_name as string) || '').toLowerCase()
     
@@ -148,127 +65,73 @@ const filteredNodes = computed(() => {
   })
 })
 
-
-// ============================================================================
-// 유틸리티 함수
-// ============================================================================
-
-/**
- * 타임스탬프를 시간 문자열로 포맷
- */
 function formatTime(timestamp: string): string {
   if (!timestamp) return ''
   return new Date(timestamp).toLocaleTimeString('ko-KR', { 
-    hour: '2-digit', 
-    minute: '2-digit', 
-    second: '2-digit' 
+    hour: '2-digit', minute: '2-digit', second: '2-digit' 
   })
 }
 
-/**
- * 노드에서 디렉토리 추출
- */
-function getDirectory(node: GraphNode): string {
-  return (node.properties?.directory as string) || ''
-}
-
-/**
- * 노드에서 클래스명 추출
- */
-function getClassName(node: GraphNode): string {
-  return (node.properties?.class_name as string)
-    || (node.properties?.name as string)
-    || ''
-}
-
-// ============================================================================
-// 이벤트 핸들러 - 노드 선택
-// ============================================================================
-
-/**
- * 노드 선택 핸들러
- */
 function handleNodeSelect(node: GraphNode | null): void {
   selectedNode.value = node
   if (node) showNodePanel.value = true
 }
 
-/**
- * 노드 더블클릭 핸들러
- */
 function handleNodeDoubleClick(node: GraphNode): void {
   selectedNode.value = node
   showNodePanel.value = true
 }
 
-// ============================================================================
-// 이벤트 핸들러 - 검색 및 다이어그램
-// ============================================================================
-
-/**
- * 검색 결과 선택 핸들러
- */
 function handleSearchSelect(node: GraphNode): void {
   selectedNode.value = node
   
   const directory = getDirectory(node)
   const className = getClassName(node)
   
-  if (!directory) {
-    alert(`디렉토리(directory)를 찾을 수 없습니다.\n클래스: ${className}`)
-    return
-  }
+  if (!directory || !className) return
   
-  if (!className) {
-    alert('클래스명을 찾을 수 없습니다.')
-    return
-  }
-  
-  // UML 뷰로 전환하고 다이어그램 생성/확장
-  activeView.value = 'uml'
-  
-  if (hasUmlDiagram.value) {
-    // 기존 다이어그램이 있으면 확장
-    projectStore.expandDiagram(directory, className)
-  } else {
-    // 기존 다이어그램이 없으면 새로 생성
-    projectStore.generateDiagram([{ directory, className }])
+  if (activeView.value === 'uml') {
+    const exists = selectedClasses.value.some(
+      c => c.className === className && c.directory === directory
+    )
+    if (!exists) {
+      selectedClasses.value = [...selectedClasses.value, { className, directory }]
+    }
   }
   
   searchQuery.value = ''
+  showSearch.value = false
 }
 
-
-/**
- * 다이어그램 확장 핸들러 (MermaidDiagram에서 클래스 클릭 시)
- */
-function handleDiagramExpand(clickedClassName: string): void {
-  // graphData에서 해당 클래스를 찾아서 directory 추출
+function handleVueFlowClassClick(className: string, directory: string): void {
   const node = graphData.value?.nodes.find(n => {
-    const nodeClassName = getClassName(n)
-    return nodeClassName === clickedClassName || 
-           nodeClassName === clickedClassName.split('\\').pop() ||
-           nodeClassName === clickedClassName.split('/').pop()
+    return getClassName(n) === className && getDirectory(n) === directory
   })
-  
   if (node) {
-    const directory = getDirectory(node)
-    const nodeClassName = getClassName(node)
-    if (directory && nodeClassName) {
-      projectStore.expandDiagram(directory, nodeClassName)
-    } else {
-      alert(`클래스 정보를 찾을 수 없습니다: ${clickedClassName}`)
-    }
-  } else {
-    alert(`클래스를 찾을 수 없습니다: ${clickedClassName}`)
+    selectedNode.value = node
+    showNodePanel.value = true
   }
 }
 
-// ============================================================================
-// 워처
-// ============================================================================
+function handleVueFlowClassExpand(className: string, directory: string): void {
+  const exists = selectedClasses.value.some(
+    c => c.className === className && c.directory === directory
+  )
+  if (!exists) {
+    selectedClasses.value = [...selectedClasses.value, { className, directory }]
+  }
+}
 
-// 그래프 생성 시 패널 자동 열기
+function clearSelectedClasses(): void {
+  selectedClasses.value = []
+}
+
+function removeSelectedClass(className: string, directory: string): void {
+  selectedClasses.value = selectedClasses.value.filter(
+    c => !(c.className === className && c.directory === directory)
+  )
+}
+
 watch(hasGraph, (has, prev) => {
   if (has && !prev) showNodePanel.value = true
 })
@@ -276,42 +139,9 @@ watch(hasGraph, (has, prev) => {
 
 <template>
   <div class="graph-tab">
-    <!-- ========== 서브 탭 ========== -->
-    <div class="view-tabs">
-      <div class="tabs-left">
-        <button 
-          class="view-tab"
-          :class="{ active: activeView === 'graph' }"
-          @click="activeView = 'graph'"
-        >
-          <span>🔗</span> 그래프
-          <span class="badge" v-if="hasGraph">{{ graphData?.nodes.length }}</span>
-        </button>
-        <button 
-          class="view-tab"
-          :class="{ active: activeView === 'uml', disabled: !showUmlTab }"
-          :disabled="!showUmlTab"
-          @click="activeView = 'uml'"
-        >
-          <span>📊</span> UML
-          <span class="badge success" v-if="hasUmlDiagram">✓</span>
-        </button>
-      </div>
-      
-      <!-- 통계 보기 버튼 (패널 닫혀있을 때) -->
-      <button 
-        v-if="hasGraph && !showNodePanel"
-        class="open-node-btn"
-        @click="showNodePanel = true"
-      >
-        📋 {{ selectedNode ? ((selectedNode.properties?.name as string) || selectedNode.labels?.[0]) : '통계 보기' }}
-      </button>
-    </div>
-    
-    <!-- ========== 메인 컨텐츠 ========== -->
-    <div class="main-content">
-      <!-- 그래프 뷰 -->
-      <div class="graph-area" v-show="activeView === 'graph'">
+    <!-- 메인 콘텐츠 -->
+    <div class="content-area">
+      <div class="view-container" v-show="activeView === 'graph'">
         <template v-if="hasGraph">
           <NvlGraph 
             ref="nvlGraphRef"
@@ -320,252 +150,173 @@ watch(hasGraph, (has, prev) => {
             @node-select="handleNodeSelect"
             @node-double-click="handleNodeDoubleClick"
           />
-          <div class="floating-info">
-            <span>노드 {{ graphData?.nodes.length }}</span>
-            <span>관계 {{ graphData?.links.length }}</span>
-          </div>
         </template>
         <template v-else>
           <div class="empty-state">
-            <div class="empty-icon">🔗</div>
+            <div class="empty-icon">📈</div>
             <h3>그래프 데이터가 없습니다</h3>
             <p>업로드 탭에서 파일을 업로드하고 Understanding을 실행하세요</p>
           </div>
         </template>
       </div>
       
-      <!-- UML 뷰 -->
-      <div class="uml-area" v-show="activeView === 'uml'">
-        <!-- 검색창 -->
-        <div class="search-box">
-          <input 
-            v-model="searchQuery"
-            placeholder="🔍 클래스명 검색..."
-          />
-          <div class="search-results" v-if="searchQuery && filteredNodes.length > 0">
-            <button 
-              v-for="node in filteredNodes.slice(0, MAX_SEARCH_RESULTS)" 
-              :key="node.id"
-              @click="handleSearchSelect(node)"
-            >
-              <span class="tag">{{ node.labels?.[0] }}</span>
-              {{ node.properties?.directory || node.properties?.name || node.id }}
-            </button>
-          </div>
-        </div>
-        
-        <!-- 다이어그램 영역 -->
-        <div class="diagram-view" v-if="hasUmlDiagram">
-          <div class="diagram-canvas">
-            <MermaidDiagram 
-              :diagram="diagramState.diagram"
-              @class-click="handleDiagramExpand"
-            />
-          </div>
-        </div>
-        <div class="empty-state" v-else>
-          <div class="empty-icon">📊</div>
-          <h3>UML 다이어그램이 없습니다</h3>
-          <p>노드를 선택하고 "다이어그램 생성"을 클릭하세요</p>
-        </div>
+      <div class="view-container" v-show="activeView === 'uml'">
+        <VueFlowClassDiagram
+          :graph-nodes="graphData?.nodes || []"
+          :graph-links="graphData?.links || []"
+          :selected-classes="selectedClasses"
+          :depth="diagramDepth"
+          @class-click="handleVueFlowClassClick"
+          @class-expand="handleVueFlowClassExpand"
+        />
       </div>
     </div>
     
-    <!-- ========== 하단 콘솔 패널 ========== -->
-    <div 
-      class="console-panel"
-      :class="{ collapsed: !showConsole, resizing: isConsoleResizing }"
-      :style="{ height: showConsole ? `${consoleHeight}px` : '44px' }"
-    >
-      <!-- 리사이즈 핸들 -->
-      <div 
-        v-if="showConsole"
-        class="console-resize-handle" 
-        @mousedown="startConsoleResize"
-      ></div>
+    <!-- 플로팅: 좌측 상단 컨트롤 -->
+    <div class="floating-controls left-top">
+      <div class="view-switcher">
+        <button 
+          :class="{ active: activeView === 'graph' }"
+          @click="activeView = 'graph'"
+        >
+          그래프
+        </button>
+        <button 
+          :class="{ active: activeView === 'uml', disabled: !showUmlTab }"
+          :disabled="!showUmlTab"
+          @click="activeView = 'uml'"
+        >
+          UML
+        </button>
+      </div>
       
-      <div class="console-header" @click="showConsole = !showConsole">
-        <div class="console-title">
-          <span class="console-icon" :class="statusType"></span>
-          <span>콘솔</span>
-          <span class="message-count" v-if="graphMessages.length">{{ graphMessages.length }}</span>
-        </div>
-        <div class="console-actions">
-          <button class="console-toggle">
-            {{ showConsole ? '▼' : '▲' }}
+      <button class="control-btn" @click="showSearch = !showSearch" title="검색">
+        🔍
+      </button>
+      
+      <div class="search-panel" v-if="showSearch">
+        <input 
+          v-model="searchQuery"
+          placeholder="클래스/노드 검색..."
+          @keyup.escape="showSearch = false"
+          autofocus
+        />
+        <div class="search-results" v-if="searchQuery && filteredNodes.length > 0">
+          <button 
+            v-for="node in filteredNodes.slice(0, MAX_SEARCH_RESULTS)" 
+            :key="node.id"
+            @click="handleSearchSelect(node)"
+          >
+            <span class="tag">{{ node.labels?.[0] }}</span>
+            {{ node.properties?.name || node.properties?.class_name || node.id }}
           </button>
         </div>
       </div>
       
-      <div class="console-body" v-show="showConsole">
-        <div class="log-entries">
-          <div 
-            v-for="(msg, idx) in graphMessages" 
-            :key="idx"
-            class="log-entry"
-            :class="msg.type"
-          >
-            <span class="log-time">{{ formatTime(msg.timestamp) }}</span>
-            <span class="log-icon" v-if="msg.type === 'error'">❌</span>
-            <span class="log-icon" v-else-if="msg.type === 'message'">💬</span>
-            <span class="log-text">{{ msg.content }}</span>
-          </div>
-          <div class="log-empty" v-if="graphMessages.length === 0">
-            로그가 없습니다
-          </div>
+      <template v-if="activeView === 'uml'">
+        <div class="selected-tags" v-if="selectedClasses.length > 0">
+          <span v-for="cls in selectedClasses" :key="`${cls.directory}::${cls.className}`" class="tag">
+            {{ cls.className }}
+            <button @click="removeSelectedClass(cls.className, cls.directory)">✕</button>
+          </span>
+          <button class="clear-btn" @click="clearSelectedClasses">지우기</button>
         </div>
-      </div>
+      </template>
     </div>
     
-    <!-- ========== 우측 노드 상세 패널 ========== -->
-    <Transition name="slide">
-      <div 
-        v-if="showNodePanel && hasGraph"
-        class="node-panel" 
-        :class="{ resizing: isResizing }"
-        :style="{ width: `${panelWidth}px` }"
-      >
-        <div class="resize-handle" @mousedown="startResize"></div>
-        
-        <div class="node-panel-header">
-          <h3>{{ selectedNode ? 'Node properties' : 'Overview' }}</h3>
-          <button class="close-btn" @click="showNodePanel = false">✕</button>
+    <!-- 플로팅: 우측 패널 토글 -->
+    <button 
+      class="panel-toggle right"
+      :class="{ open: showNodePanel }"
+      @click="showNodePanel = !showNodePanel"
+    >
+      {{ showNodePanel ? '›' : '‹' }}
+    </button>
+    
+    <!-- 플로팅: 노드 패널 -->
+    <Transition name="slide-right">
+      <div class="floating-panel right" v-if="showNodePanel">
+        <div class="panel-header">
+          <span>{{ selectedNode ? 'Node' : 'Overview' }}</span>
+          <button @click="showNodePanel = false">✕</button>
         </div>
-        
-        <div class="node-panel-body">
+        <div class="panel-body">
           <NodeDetailPanel 
             :node="selectedNode"
             :nodeStats="nvlGraphRef?.nodeStats"
             :relationshipStats="nvlGraphRef?.relationshipStats"
             :totalNodes="graphData?.nodes.length || 0"
             :totalRelationships="graphData?.links.length || 0"
+            :displayedNodes="nvlGraphRef?.nodeCount?.() || graphData?.nodes.length || 0"
+            :hiddenNodes="nvlGraphRef?.hiddenNodeCount?.value || 0"
             :isProcessing="isProcessing"
           />
         </div>
       </div>
     </Transition>
     
+    <!-- 플로팅: 콘솔 -->
+    <button 
+      class="console-toggle-btn"
+      :class="{ open: showConsole, [statusType]: true }"
+      @click="showConsole = !showConsole"
+    >
+      <span class="status-dot"></span>
+      콘솔
+      <span class="count" v-if="graphMessages.length">{{ graphMessages.length }}</span>
+      <span class="arrow">{{ showConsole ? '▼' : '▲' }}</span>
+    </button>
+    
+    <Transition name="slide-up">
+      <div class="floating-console" v-if="showConsole">
+        <div class="console-content">
+          <div 
+            v-for="(msg, idx) in graphMessages" 
+            :key="idx"
+            class="log-item"
+            :class="msg.type"
+          >
+            <span class="time">{{ formatTime(msg.timestamp) }}</span>
+            <span class="text">{{ msg.content }}</span>
+          </div>
+          <div class="log-empty" v-if="graphMessages.length === 0">
+            로그가 없습니다
+          </div>
+        </div>
+      </div>
+    </Transition>
+    
+    <!-- 플로팅: 정보 -->
+    <div class="floating-info" v-if="hasGraph">
+      <span>{{ graphData?.nodes.length }} 노드</span>
+      <span>{{ graphData?.links.length }} 관계</span>
+    </div>
   </div>
 </template>
-    
+
 <style lang="scss" scoped>
 // ============================================================================
-// 레이아웃
+// 기본 레이아웃 (명확한 구분)
 // ============================================================================
 
 .graph-tab {
   flex: 1;
   display: flex;
-  flex-direction: column;
-  overflow: hidden;
   position: relative;
-  background: var(--color-bg-secondary);
+  overflow: hidden;
+  background: #ffffff;
 }
 
-.main-content {
+.content-area {
   flex: 1;
   display: flex;
-  flex-direction: column;
-  overflow: hidden;
   position: relative;
 }
 
-.graph-area,
-.uml-area {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  position: relative;
-  overflow: hidden;
-  background: var(--color-bg-primary);
-  // GPU 가속으로 패널 전환 시 깜빡임 방지
-  transform: translateZ(0);
-  backface-visibility: hidden;
-}
-
-// ============================================================================
-// 서브 탭
-// ============================================================================
-
-.view-tabs {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 10px 16px;
-  background: var(--color-bg-tertiary);
-  border-bottom: 1px solid var(--color-border);
-  flex-shrink: 0;
-}
-
-.tabs-left {
-  display: flex;
-  gap: 4px;
-}
-
-.view-tab {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 16px;
-  font-size: 13px;
-  font-weight: 500;
-  background: transparent;
-  border: none;
-  border-radius: 6px;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  transition: all 0.2s;
-  
-  &:hover:not(.disabled) {
-    background: var(--color-bg-elevated);
-    color: var(--color-text-primary);
-  }
-  
-  &.active {
-    background: var(--color-accent-primary);
-    color: white;
-    
-    .badge {
-      background: rgba(239, 246, 255, 0.95);
-      color: #1d4ed8;
-    }
-  }
-  
-  &.disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-  }
-  
-  .badge {
-    font-size: 10px;
-    padding: 2px 6px;
-    background: var(--color-bg-tertiary);
-    border-radius: 10px;
-    font-family: var(--font-mono);
-    color: var(--color-text-secondary);
-  }
-}
-
-// ============================================================================
-// 플로팅 정보
-// ============================================================================
-
-.floating-info {
+.view-container {
   position: absolute;
-  bottom: 16px;
-  left: 16px;
-  display: flex;
-  gap: 12px;
-  padding: 8px 14px;
-  background: var(--color-bg-elevated);
-  backdrop-filter: blur(8px);
-  border-radius: 20px;
-  border: 1px solid var(--color-border);
-  font-size: 12px;
-  color: var(--color-text-secondary);
-  font-family: var(--font-mono);
-  z-index: 10;
-  box-shadow: var(--shadow-md);
+  inset: 0;
+  background: #ffffff;
 }
 
 // ============================================================================
@@ -578,238 +329,401 @@ watch(hasGraph, (has, prev) => {
   align-items: center;
   justify-content: center;
   height: 100%;
-  text-align: center;
-  color: var(--color-text-muted);
+  color: #6b7280;
   
   .empty-icon {
-    font-size: 56px;
-    margin-bottom: 16px;
+    font-size: 48px;
+    margin-bottom: 12px;
     opacity: 0.5;
   }
   
   h3 {
     font-size: 16px;
-    color: var(--color-text-secondary);
-    margin-bottom: 8px;
-    font-weight: 500;
+    color: #374151;
+    margin-bottom: 6px;
+    font-weight: 600;
   }
   
   p {
     font-size: 13px;
-    max-width: 280px;
+    color: #9ca3af;
   }
 }
 
 // ============================================================================
-// UML 검색
+// 플로팅 좌측 상단 컨트롤 (명확한 구분)
 // ============================================================================
 
-.search-box {
+.floating-controls {
   position: absolute;
-  top: 16px;
-  left: 16px;
-  right: 16px;
-  z-index: 20;
+  top: 8px;
+  left: 8px;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  z-index: 100;
+}
+
+.view-switcher {
+  display: flex;
+  background: #f8fafc;
+  border-radius: 10px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  gap: 4px;
+  padding: 4px;
+  
+  button {
+    padding: 6px 16px;
+    font-size: 13px;
+    font-weight: 500;
+    background: transparent;
+    border: none;
+    color: #94a3b8;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border-radius: 6px;
+    
+    &:hover:not(.disabled) {
+      background: #f1f5f9;
+      color: #64748b;
+    }
+    
+    &.active {
+      background: #ffffff;
+      color: #0f172a;
+      font-weight: 600;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    }
+    
+    &.disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+  }
+}
+
+.control-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 10px;
+  height: 32px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #64748b;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+  
+  &:hover {
+    background: #f8fafc;
+    border-color: #cbd5e1;
+    color: #475569;
+  }
+  
+}
+
+// ============================================================================
+// 검색 패널
+// ============================================================================
+
+.search-panel {
+  position: relative;
   
   input {
-    width: 100%;
-    padding: 10px 16px;
-    background: var(--color-bg-elevated);
-    border: 1px solid var(--color-border);
-    border-radius: 8px;
-    color: var(--color-text-primary);
-    font-size: 13px;
-    box-shadow: var(--shadow-md);
+    width: 200px;
+    height: 32px;
+    padding: 0 10px;
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    font-size: 12px;
+    color: #1f2937;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
     
     &:focus {
       outline: none;
-      border-color: var(--color-accent-primary);
-      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+      border-color: #3b82f6;
+      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
     }
     
     &::placeholder {
-      color: var(--color-text-muted);
+      color: #9ca3af;
     }
   }
   
   .search-results {
-    margin-top: 8px;
-    background: var(--color-bg-elevated);
-    border: 1px solid var(--color-border);
-    border-radius: 8px;
-    overflow: hidden;
-    max-height: 280px;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    width: 260px;
+    margin-top: 4px;
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    max-height: 200px;
     overflow-y: auto;
-    box-shadow: var(--shadow-lg);
     
     button {
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 8px;
       width: 100%;
-      padding: 10px 14px;
+      padding: 8px 10px;
       background: transparent;
       border: none;
       text-align: left;
-      color: var(--color-text-primary);
-      font-size: 13px;
+      font-size: 12px;
+      color: #374151;
       cursor: pointer;
-      transition: background 0.15s;
+      border-bottom: 1px solid #f3f4f6;
+      
+      &:last-child {
+        border-bottom: none;
+      }
       
       &:hover {
-        background: var(--color-bg-tertiary);
+        background: #f9fafb;
       }
       
       .tag {
         font-size: 10px;
         padding: 2px 6px;
-        background: var(--color-accent-primary);
+        background: #3b82f6;
         color: white;
         border-radius: 4px;
-        text-transform: uppercase;
         font-weight: 600;
       }
     }
   }
 }
 
+
 // ============================================================================
-// 다이어그램 뷰
+// 선택된 클래스 태그
 // ============================================================================
 
-.diagram-view {
-  flex: 1;
+.selected-tags {
   display: flex;
-  flex-direction: column;
-  margin: 56px 12px 12px;
-  background: var(--color-bg-tertiary);
-  border-radius: 12px;
-  overflow: hidden;
-  border: 1px solid var(--color-border);
-  min-height: 300px;
-}
-
-.diagram-canvas {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  min-height: 0;
-  height: 100%;
-}
-
-// ============================================================================
-// 하단 콘솔 패널
-// ============================================================================
-
-.console-panel {
-  // 그래프 영역 위에 오버레이 (그래프 크기에 영향 안 줌)
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 90;
-  background: #eff6ff;
-  border-top: 2px solid #bfdbfe;
-  display: flex;
-  flex-direction: column;
-  transition: height 0.25s ease;
-  overflow: hidden;
-  // GPU 가속
-  will-change: height;
-  transform: translateZ(0);
-  backface-visibility: hidden;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  max-width: 280px;
   
-  &.collapsed {
-    height: 44px !important;
+  .tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    background: #3b82f6;
+    color: white;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 500;
     
-    .console-body {
-      display: none;
+    button {
+      width: 14px;
+      height: 14px;
+      background: rgba(255, 255, 255, 0.2);
+      border: none;
+      border-radius: 50%;
+      color: white;
+      font-size: 9px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      
+      &:hover {
+        background: rgba(255, 255, 255, 0.4);
+      }
     }
   }
   
-  &.resizing {
-    transition: none;
-    user-select: none;
+  .clear-btn {
+    padding: 4px 8px;
+    background: #ffffff;
+    border: 1px solid #d1d5db;
+    border-radius: 4px;
+    font-size: 10px;
+    color: #6b7280;
+    cursor: pointer;
+    
+    &:hover {
+      background: #fee2e2;
+      border-color: #fecaca;
+      color: #dc2626;
+    }
   }
 }
 
-.console-resize-handle {
+// ============================================================================
+// 패널 토글 버튼
+// ============================================================================
+
+.panel-toggle {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 18px;
+  height: 50px;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  font-size: 12px;
+  color: #64748b;
+  cursor: pointer;
+  z-index: 100;
+  transition: all 0.15s;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
+  
+  &.right {
+    right: 0;
+    border-radius: 6px 0 0 6px;
+    border-right: none;
+    
+    &.open {
+      right: 300px;
+    }
+  }
+  
+  &:hover {
+    background: #f1f5f9;
+    color: #475569;
+    border-color: #94a3b8;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  }
+}
+
+// ============================================================================
+// 플로팅 노드 패널
+// ============================================================================
+
+.floating-panel {
   position: absolute;
   top: 0;
-  left: 0;
-  right: 0;
-  height: 6px;
-  cursor: ns-resize;
-  background: transparent;
-  z-index: 10;
+  bottom: 0;
+  width: 300px;
+  background: #ffffff;
+  border-left: 1px solid #cbd5e1;
+  display: flex;
+  flex-direction: column;
+  z-index: 90;
+  box-shadow: -4px 0 12px rgba(0, 0, 0, 0.1);
   
-  &:hover {
-    background: rgba(59, 130, 246, 0.3);
+  &.right {
+    right: 0;
   }
   
-  &:active {
-    background: rgba(59, 130, 246, 0.5);
+  .panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 12px;
+    background: #f1f5f9;
+    border-bottom: 1px solid #cbd5e1;
+    
+    span {
+      font-size: 12px;
+      font-weight: 600;
+      color: #374151;
+    }
+    
+    button {
+      width: 20px;
+      height: 20px;
+      background: transparent;
+      border: none;
+      color: #9ca3af;
+      cursor: pointer;
+      border-radius: 4px;
+      font-size: 12px;
+      
+      &:hover {
+        background: #e5e7eb;
+        color: #374151;
+      }
+    }
+  }
+  
+  .panel-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
   }
 }
 
-.console-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 12px 16px;
-  height: 44px;
-  min-height: 44px;
-  background: linear-gradient(135deg, #dbeafe 0%, #eff6ff 100%);
-  cursor: pointer;
-  user-select: none;
-  border-bottom: 1px solid #bfdbfe;
-  
-  &:hover {
-    background: linear-gradient(135deg, #bfdbfe 0%, #dbeafe 100%);
-  }
-}
+// ============================================================================
+// 콘솔 토글 버튼
+// ============================================================================
 
-.console-title {
+.console-toggle-btn {
+  position: absolute;
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%);
   display: flex;
   align-items: center;
-  gap: 10px;
-  font-size: 13px;
+  gap: 6px;
+  padding: 6px 14px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  font-size: 12px;
   font-weight: 600;
-  color: #1e40af;
+  color: #374151;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  z-index: 100;
+  transition: all 0.15s;
   
-  .console-icon {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    background: #60a5fa;
-    
-    &.error {
-      background: #ef4444;
-      box-shadow: 0 0 8px rgba(239, 68, 68, 0.4);
-    }
-    
-    &.processing {
-      background: #3b82f6;
-      box-shadow: 0 0 8px rgba(59, 130, 246, 0.4);
-      animation: pulse 1.5s infinite;
-    }
-    
-    &.success {
-      background: #22c55e;
-      box-shadow: 0 0 8px rgba(34, 197, 94, 0.4);
-    }
+  &:hover {
+    background: #f9fafb;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
   }
   
-  .message-count {
-    font-size: 11px;
-    padding: 2px 10px;
-    background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  &.open {
+    bottom: 120px;
+  }
+  
+  .status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #9ca3af;
+  }
+  
+  &.processing .status-dot {
+    background: #3b82f6;
+    animation: pulse 1.5s infinite;
+  }
+  
+  &.error .status-dot {
+    background: #ef4444;
+  }
+  
+  &.success .status-dot {
+    background: #22c55e;
+  }
+  
+  .count {
+    padding: 2px 6px;
+    background: #3b82f6;
     color: white;
-    border-radius: 12px;
-    font-family: var(--font-mono);
-    font-weight: 500;
-    box-shadow: 0 2px 4px rgba(59, 130, 246, 0.25);
+    border-radius: 8px;
+    font-size: 10px;
+    font-weight: 600;
+  }
+  
+  .arrow {
+    font-size: 10px;
+    color: #9ca3af;
   }
 }
 
@@ -818,229 +732,98 @@ watch(hasGraph, (has, prev) => {
   50% { opacity: 0.4; }
 }
 
-.console-actions {
-  .console-toggle {
-    width: 28px;
-    height: 28px;
-    background: #ffffff;
-    border: 1px solid #93c5fd;
-    border-radius: 6px;
-    color: #3b82f6;
-    font-size: 12px;
-    cursor: pointer;
-    transition: all 0.15s;
-    
-    &:hover {
-      background: #dbeafe;
-      color: #1d4ed8;
-      border-color: #60a5fa;
-    }
-  }
-}
+// ============================================================================
+// 플로팅 콘솔
+// ============================================================================
 
-.console-body {
-  flex: 1;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
+.floating-console {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 112px;
   background: #f8fafc;
-  border-top: 1px solid #e2e8f0;
-}
-
-.log-entries {
-  flex: 1;
-  overflow-y: auto;
-  padding: 12px 0;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 1.6;
-}
-
-.log-entry {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 6px 16px;
-  color: #475569;
-  transition: background 0.15s;
+  border-top: 2px solid #cbd5e1;
+  z-index: 90;
+  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.05);
   
-  &:hover {
-    background: rgba(0, 0, 0, 0.02);
+  .console-content {
+    height: 100%;
+    overflow-y: auto;
+    padding: 8px 12px;
+    font-family: 'Consolas', monospace;
+    font-size: 11px;
+    background: #ffffff;
+    margin: 4px;
+    border-radius: 4px;
+    border: 1px solid #e2e8f0;
   }
   
-  &.error {
-    color: #b91c1c;
-    background: rgba(239, 68, 68, 0.08);
-    border-left: 3px solid #ef4444;
+  .log-item {
+    display: flex;
+    gap: 10px;
+    padding: 3px 0;
+    color: #374151;
     
-    .log-time {
+    &.error {
       color: #dc2626;
     }
-  }
-  
-  &.message {
-    color: #1e293b;
-  }
-  
-  .log-time {
-    color: #94a3b8;
-    flex-shrink: 0;
-    min-width: 70px;
-  }
-  
-  .log-icon {
-    flex-shrink: 0;
-  }
-  
-  .log-text {
-    flex: 1;
-    word-break: break-word;
-  }
-}
-
-.log-empty {
-  padding: 32px;
-  text-align: center;
-  color: #94a3b8;
-  font-size: 13px;
-}
-
-// ============================================================================
-// 우측 노드 패널
-// ============================================================================
-
-.node-panel {
-  // 그래프 영역 위에 오버레이 (그래프 크기에 영향 안 줌)
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: 380px;
-  background: #ffffff;
-  border-left: 1px solid #e5e7eb;
-  display: flex;
-  flex-direction: column;
-  z-index: 100;
-  box-shadow: -4px 0 20px rgba(0, 0, 0, 0.08);
-  // GPU 가속으로 깜빡임 방지
-  will-change: transform, opacity;
-  transform: translateZ(0);
-  backface-visibility: hidden;
-  
-  &.resizing {
-    user-select: none;
-  }
-}
-
-.resize-handle {
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 6px;
-  cursor: ew-resize;
-  background: transparent;
-  transition: background 0.15s;
-  z-index: 10;
-  
-  &:hover {
-    background: rgba(59, 130, 246, 0.3);
-  }
-  
-  &:active {
-    background: rgba(59, 130, 246, 0.5);
-  }
-}
-
-.node-panel-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 16px 20px;
-  background: #f9fafb;
-  border-bottom: 1px solid #e5e7eb;
-  flex-shrink: 0;
-  
-  h3 {
-    font-size: 14px;
-    font-weight: 500;
-    color: #374151;
-    display: flex;
-    align-items: center;
-    gap: 8px;
     
-    &::before {
-      content: '📋';
-      font-size: 14px;
+    .time {
+      color: #9ca3af;
+      flex-shrink: 0;
     }
   }
   
-  .close-btn {
-    width: 28px;
-    height: 28px;
-    background: transparent;
-    border: 1px solid #e5e7eb;
-    border-radius: 6px;
+  .log-empty {
     color: #9ca3af;
-    font-size: 14px;
-    cursor: pointer;
-    transition: all 0.15s;
-    
-    &:hover {
-      background: #fef2f2;
-      color: #ef4444;
-      border-color: #fecaca;
-    }
+    text-align: center;
+    padding: 16px;
   }
 }
 
-.node-panel-body {
-  flex: 1;
-  overflow-y: auto;
-  padding: 0 20px 20px;
+// ============================================================================
+// 플로팅 정보
+// ============================================================================
+
+.floating-info {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  display: flex;
+  gap: 10px;
+  padding: 6px 12px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #6b7280;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
+  z-index: 10;
 }
 
 // ============================================================================
 // 트랜지션
 // ============================================================================
 
-.slide-enter-active,
-.slide-leave-active {
-  transition: transform 0.25s ease, opacity 0.2s ease;
+.slide-right-enter-active,
+.slide-right-leave-active {
+  transition: transform 0.2s ease;
 }
 
-.slide-enter-from,
-.slide-leave-to {
+.slide-right-enter-from,
+.slide-right-leave-to {
   transform: translateX(100%);
-  opacity: 0;
 }
 
-// ============================================================================
-// 노드 패널 열기 버튼
-// ============================================================================
+.slide-up-enter-active,
+.slide-up-leave-active {
+  transition: transform 0.2s ease;
+}
 
-.open-node-btn {
-  padding: 8px 14px;
-  background: var(--color-bg-elevated);
-  border: 1px solid var(--color-accent-primary);
-  border-radius: 8px;
-  color: var(--color-accent-primary);
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  box-shadow: var(--shadow-sm);
-  transition: all 0.15s;
-  max-width: 200px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  
-  &:hover {
-    background: var(--color-accent-primary);
-    color: white;
-  }
+.slide-up-enter-from,
+.slide-up-leave-to {
+  transform: translateY(100%);
 }
 </style>
