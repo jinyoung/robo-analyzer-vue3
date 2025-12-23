@@ -32,7 +32,6 @@ const getStepStatus = (step: Step, index: number, steps: Step[]): 'done' | 'curr
 
 <template>
   <div class="steps-panel">
-    <div class="steps-title">단계</div>
     <div class="steps-list">
       <div 
         v-for="(step, index) in steps" 
@@ -53,10 +52,6 @@ const getStepStatus = (step: Step, index: number, steps: Step[]): 'done' | 'curr
 <style lang="scss" scoped>
 // 노드패널처럼 단순한 단계 패널
 .steps-panel {
-  background: #ffffff;
-  border: 1px solid #e5e7eb;
-  border-radius: 6px;
-  padding: 8px;
   min-width: 120px;
 }
 
@@ -74,25 +69,34 @@ const getStepStatus = (step: Step, index: number, steps: Step[]): 'done' | 'curr
 .steps-list {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 6px;
 }
 
 .step-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
-  border-radius: 4px;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  transition: all 0.2s ease;
+  cursor: pointer;
+  
+  &:hover {
+    transform: translateX(4px);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  }
   
   &.done {
-    background: #ecfdf5;
-    border-color: #86efac;
+    background: #f0fdf4;
+    
+    &:hover {
+      background: #dcfce7;
+    }
     
     .step-number {
       background: #22c55e;
       color: white;
+      box-shadow: 0 2px 4px rgba(34, 197, 94, 0.3);
     }
     
     .step-label {
@@ -103,11 +107,17 @@ const getStepStatus = (step: Step, index: number, steps: Step[]): 'done' | 'curr
   
   &.current {
     background: #eff6ff;
-    border-color: #93c5fd;
+    animation: pulse 2s ease-in-out infinite;
+    
+    &:hover {
+      background: #dbeafe;
+    }
     
     .step-number {
       background: #3b82f6;
       color: white;
+      box-shadow: 0 2px 8px rgba(59, 130, 246, 0.4);
+      animation: glow 2s ease-in-out infinite;
     }
     
     .step-label {
@@ -117,7 +127,11 @@ const getStepStatus = (step: Step, index: number, steps: Step[]): 'done' | 'curr
   }
   
   &.pending {
-    opacity: 0.5;
+    background: #f9fafb;
+    
+    &:hover {
+      background: #f3f4f6;
+    }
     
     .step-number {
       background: #e5e7eb;
@@ -131,20 +145,40 @@ const getStepStatus = (step: Step, index: number, steps: Step[]): 'done' | 'curr
 }
 
 .step-number {
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 4px;
-  font-size: 11px;
+  border-radius: 6px;
+  font-size: 12px;
   font-weight: 700;
   flex-shrink: 0;
+  transition: all 0.2s ease;
 }
 
 .step-label {
-  font-size: 12px;
+  font-size: 13px;
   color: #6b7280;
   font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.95;
+  }
+}
+
+@keyframes glow {
+  0%, 100% {
+    box-shadow: 0 2px 8px rgba(59, 130, 246, 0.4);
+  }
+  50% {
+    box-shadow: 0 2px 12px rgba(59, 130, 246, 0.6);
+  }
 }
 </style>

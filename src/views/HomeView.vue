@@ -12,7 +12,7 @@ const { activeTab } = storeToRefs(sessionStore)
 const tabs = [
   { id: 'upload', label: '업로드', icon: '📁' },
   { id: 'graph', label: '그래프', icon: '📊' },
-  { id: 'convert', label: '전환', icon: '⚡' }
+  { id: 'convert', label: '전환', icon: '🔀' }
 ]
 </script>
 

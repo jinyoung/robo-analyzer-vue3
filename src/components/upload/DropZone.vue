@@ -133,7 +133,6 @@ const handleClick = () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 280px;
   padding: var(--spacing-xl);
   background: var(--color-bg-secondary);
   border: 2px dashed var(--color-border);

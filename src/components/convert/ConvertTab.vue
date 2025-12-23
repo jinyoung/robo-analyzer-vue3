@@ -10,6 +10,7 @@ import { storeToRefs } from 'pinia'
 import CodeEditor from './CodeEditor.vue'
 import FrameworkSteps from './FrameworkSteps.vue'
 import type { ConvertedFile } from '@/types'
+import { useResize } from '@/composables/useResize'
 
 const projectStore = useProjectStore()
 const { 
@@ -24,8 +25,25 @@ const {
 const selectedFile = ref<string | null>(null)
 const showConsole = ref(false)
 const showStepsPanel = ref(false)
-const showExplorer = ref(true)
 const expandedFolders = ref<Set<string>>(new Set(['']))
+
+// 파일 탐색기 리사이즈
+const { value: explorerWidth, isResizing: isExplorerResizing, startResize: startExplorerResize } = useResize({
+  direction: 'horizontal',
+  initialValue: 280,
+  min: 200,
+  max: 600,
+  fromEnd: false
+})
+
+// 콘솔 리사이즈
+const { value: consoleHeight, isResizing: isConsoleResizing, startResize: startConsoleResize } = useResize({
+  direction: 'vertical',
+  initialValue: 200,
+  min: 100,
+  max: 600,
+  fromEnd: true
+})
 
 const showCode = computed(() => convertedFiles.value.length > 0)
 
@@ -33,6 +51,13 @@ const showSteps = computed(() =>
   convertTarget.value === 'java' || convertTarget.value === 'python' || 
   convertTarget.value === 'oracle' || convertTarget.value === 'postgresql'
 )
+
+// 로그가 있을 때 자동으로 콘솔 표시
+watch(convertMessages, (messages) => {
+  if (messages.length > 0 && !showConsole.value) {
+    showConsole.value = true
+  }
+}, { immediate: true })
 
 const statusType = computed(() => {
   if (!currentStep.value) return 'idle'
@@ -146,63 +171,59 @@ watch(convertedFiles, (files) => {
   <div class="convert-tab">
     <!-- 메인 콘텐츠 -->
     <div class="main-area">
-      <!-- 파일 탐색기 토글 -->
-      <button 
-        class="panel-toggle left"
-        :class="{ open: showExplorer }"
-        @click="showExplorer = !showExplorer"
-      >
-        {{ showExplorer ? '‹' : '›' }}
-      </button>
-      
       <!-- 파일 탐색기 -->
-      <Transition name="slide-left">
-        <div class="file-explorer" v-if="showExplorer">
-          <div class="explorer-header">
-            <span>파일</span>
-            <span class="count">{{ convertedFiles.length }}</span>
-          </div>
-          
-          <div class="explorer-content" v-if="showCode">
-            <div v-for="folder in sortedFolders" :key="folder" class="folder-group">
+      <div class="file-explorer" :style="{ width: `${explorerWidth}px` }">
+        <div class="explorer-header">
+          <span>파일</span>
+          <span class="count">{{ convertedFiles.length }}</span>
+        </div>
+        
+        <div class="explorer-content" v-if="showCode">
+          <div v-for="folder in sortedFolders" :key="folder" class="folder-group">
+            <div 
+              v-if="folder"
+              class="folder-item"
+              @click="toggleFolder(folder)"
+            >
+              <span>{{ expandedFolders.has(folder) ? '📂' : '📁' }}</span>
+              <span>{{ getFolderName(folder) }}</span>
+            </div>
+            
+            <div class="file-list" v-show="!folder || expandedFolders.has(folder)">
               <div 
-                v-if="folder"
-                class="folder-item"
-                @click="toggleFolder(folder)"
+                v-for="file in fileTree.get(folder)" 
+                :key="file.fileName"
+                class="file-item"
+                :class="{ active: selectedFile === file.fileName }"
+                @click="selectFile(file.fileName)"
               >
-                <span>{{ expandedFolders.has(folder) ? '📂' : '📁' }}</span>
-                <span>{{ getFolderName(folder) }}</span>
-              </div>
-              
-              <div class="file-list" v-show="!folder || expandedFolders.has(folder)">
-                <div 
-                  v-for="file in fileTree.get(folder)" 
-                  :key="file.fileName"
-                  class="file-item"
-                  :class="{ active: selectedFile === file.fileName }"
-                  @click="selectFile(file.fileName)"
-                >
-                  <span class="icon">{{ getFileIcon(file.fileName) }}</span>
-                  <span class="name">{{ getFileName(file.fileName) }}</span>
-                </div>
+                <span class="icon">{{ getFileIcon(file.fileName) }}</span>
+                <span class="name">{{ getFileName(file.fileName) }}</span>
               </div>
             </div>
           </div>
-          
-          <div class="explorer-empty" v-else>
-            <span>파일 없음</span>
-          </div>
-          
-          <div class="explorer-actions">
-            <button @click="handleRunConvert" :disabled="isProcessing">
-              Convert
-            </button>
-            <button @click="handleDownload" :disabled="isProcessing || !showCode">
-              📦 ZIP
-            </button>
-          </div>
         </div>
-      </Transition>
+        
+        <div class="explorer-empty" v-else>
+          <span>파일 없음</span>
+        </div>
+        
+        <div class="explorer-actions">
+          <button @click="handleRunConvert" :disabled="isProcessing">
+            Convert
+          </button>
+          <button @click="handleDownload" :disabled="isProcessing || !showCode">
+            📦 ZIP
+          </button>
+        </div>
+      </div>
+      
+      <!-- 리사이즈 핸들 -->
+      <div 
+        class="resize-handle"
+        :class="{ resizing: isExplorerResizing }"
+        @mousedown="startExplorerResize"
+      ></div>
       
       <!-- 코드 에디터 영역 -->
       <div class="editor-area">
@@ -231,24 +252,23 @@ watch(convertedFiles, (files) => {
           </div>
         </div>
       </div>
+      
+      <!-- 플로팅: 단계 패널 토글 (우측) -->
+      <button 
+        v-if="showSteps && frameworkSteps.length > 0 && !showStepsPanel"
+        class="panel-toggle right"
+        @click="showStepsPanel = !showStepsPanel"
+      >
+        ‹
+      </button>
     </div>
-    
-    <!-- 플로팅: 단계 패널 토글 (우측) -->
-    <button 
-      v-if="showSteps && frameworkSteps.length > 0"
-      class="panel-toggle right"
-      :class="{ open: showStepsPanel }"
-      @click="showStepsPanel = !showStepsPanel"
-    >
-      {{ showStepsPanel ? '›' : '‹' }}
-    </button>
     
     <!-- 플로팅: 단계 패널 (노드패널처럼 우측 슬라이드) -->
     <Transition name="slide-right">
       <div class="floating-panel right" v-if="showStepsPanel && showSteps">
         <div class="panel-header">
           <span>단계</span>
-          <button @click="showStepsPanel = false">✕</button>
+          <button @click="showStepsPanel = false">›</button>
         </div>
         <div class="panel-body">
           <FrameworkSteps :steps="frameworkSteps" :strategy="convertTarget" />
@@ -256,20 +276,30 @@ watch(convertedFiles, (files) => {
       </div>
     </Transition>
     
-    <!-- 플로팅: 콘솔 -->
+    <!-- 플로팅: 콘솔 토글 버튼 (콘솔이 닫혔을 때만 표시) -->
     <button 
+      v-if="!showConsole"
       class="console-toggle-btn"
-      :class="{ open: showConsole, [statusType]: true }"
+      :class="[statusType]"
       @click="showConsole = !showConsole"
     >
       <span class="dot"></span>
       콘솔
       <span class="count" v-if="convertMessages.length">{{ convertMessages.length }}</span>
-      <span class="arrow">{{ showConsole ? '▼' : '▲' }}</span>
     </button>
     
     <Transition name="slide-up">
-      <div class="floating-console" v-if="showConsole">
+      <div class="floating-console" v-if="showConsole" :style="{ height: `${consoleHeight}px` }">
+        <div class="console-header">
+          <span>콘솔</span>
+          <span class="console-count" v-if="convertMessages.length">{{ convertMessages.length }}</span>
+        </div>
+        <!-- 리사이즈 핸들 -->
+        <div 
+          class="console-resize-handle"
+          :class="{ resizing: isConsoleResizing }"
+          @mousedown="startConsoleResize"
+        ></div>
         <div class="console-content">
           <div 
             v-for="(msg, idx) in convertMessages" 
@@ -284,6 +314,10 @@ watch(convertedFiles, (files) => {
             로그가 없습니다
           </div>
         </div>
+        <!-- 콘솔 닫기 버튼 (하단 중앙) -->
+        <button class="console-close-btn-bottom" @click="showConsole = false">
+          <span class="arrow">▼</span>
+        </button>
       </div>
     </Transition>
   </div>
@@ -313,7 +347,6 @@ watch(convertedFiles, (files) => {
 // ============================================================================
 
 .file-explorer {
-  width: 200px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
@@ -448,6 +481,35 @@ watch(convertedFiles, (files) => {
 }
 
 // ============================================================================
+// 리사이즈 핸들 공통 스타일
+// ============================================================================
+
+@mixin resize-handle-base {
+  background: transparent;
+  transition: background 0.15s;
+  z-index: 10;
+  
+  &:hover {
+    background: #cbd5e1;
+  }
+  
+  &.resizing {
+    background: #94a3b8;
+  }
+}
+
+// ============================================================================
+// 리사이즈 핸들
+// ============================================================================
+
+.resize-handle {
+  width: 4px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  @include resize-handle-base;
+}
+
+// ============================================================================
 // 에디터 영역
 // ============================================================================
 
@@ -544,17 +606,20 @@ watch(convertedFiles, (files) => {
 
 .panel-toggle {
   position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 18px;
-  height: 50px;
+  top: 8px;
+  width: 32px;
+  height: 32px;
   background: #ffffff;
   border: 1px solid #cbd5e1;
-  font-size: 12px;
-  color: #64748b;
+  font-size: 16px;
+  font-weight: 600;
+  color: #475569;
   cursor: pointer;
   z-index: 100;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
   
   &.left {
     left: 0;
@@ -567,18 +632,13 @@ watch(convertedFiles, (files) => {
   }
   
   &.right {
-    right: 0;
-    border-radius: 4px 0 0 4px;
-    border-right: none;
-    
-    &.open {
-      right: 300px;
-    }
+    right: 8px;
+    border-radius: 6px;
   }
   
   &:hover {
     background: #f1f5f9;
-    color: #475569;
+    color: #1e293b;
     border-color: #94a3b8;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
   }
@@ -591,14 +651,16 @@ watch(convertedFiles, (files) => {
 .floating-panel {
   position: absolute;
   top: 0;
-  bottom: 0;
   width: 300px;
+  max-height: 100vh;
+  min-height: 200px;
   background: #ffffff;
-  border-left: 1px solid #cbd5e1;
+  border-left: 1px solid #e5e7eb;
+  border-bottom: 1px solid #e5e7eb;
   display: flex;
   flex-direction: column;
   z-index: 90;
-  box-shadow: -4px 0 12px rgba(0, 0, 0, 0.1);
+  box-shadow: -2px 0 8px rgba(0, 0, 0, 0.05);
   
   &.right {
     right: 0;
@@ -611,6 +673,7 @@ watch(convertedFiles, (files) => {
     padding: 10px 12px;
     background: #f1f5f9;
     border-bottom: 1px solid #cbd5e1;
+    flex-shrink: 0;
     
     span {
       font-size: 12px;
@@ -619,24 +682,27 @@ watch(convertedFiles, (files) => {
     }
     
     button {
-      width: 20px;
-      height: 20px;
+      width: 24px;
+      height: 24px;
       background: transparent;
       border: none;
-      color: #9ca3af;
+      color: #64748b;
       cursor: pointer;
       border-radius: 4px;
-      font-size: 12px;
+      font-size: 16px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      justify-content: center;
       
       &:hover {
         background: #e5e7eb;
-        color: #374151;
+        color: #1e293b;
       }
     }
   }
   
   .panel-body {
-    flex: 1;
     overflow-y: auto;
     padding: 8px;
   }
@@ -719,20 +785,90 @@ watch(convertedFiles, (files) => {
   bottom: 0;
   left: 0;
   right: 0;
-  height: 112px;
   background: #f8fafc;
   border-top: 2px solid #cbd5e1;
   z-index: 90;
   box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.05);
+  display: flex;
+  flex-direction: column;
+  
+  .console-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: #ffffff;
+    border-bottom: 1px solid #e5e7eb;
+    font-size: 12px;
+    font-weight: 600;
+    color: #374151;
+    
+    .console-count {
+      padding: 2px 6px;
+      background: #3b82f6;
+      color: white;
+      border-radius: 8px;
+      font-size: 10px;
+      font-weight: 600;
+    }
+    
+  }
+  
+  .console-close-btn-bottom {
+    position: absolute;
+    bottom: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    color: #64748b;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    z-index: 10;
+    transition: all 0.15s;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
+    
+    .arrow {
+      font-size: 12px;
+    }
+    
+    &:hover {
+      background: #f1f5f9;
+      color: #1e293b;
+      border-color: #94a3b8;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+    }
+  }
+  
+  .console-resize-handle {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    cursor: row-resize;
+    z-index: 1;
+    @include resize-handle-base;
+  }
   
   .console-content {
-    height: 100%;
+    flex: 1;
     overflow-y: auto;
     padding: 8px 12px;
+    margin-top: 4px;
+    margin-left: 4px;
+    margin-right: 4px;
+    margin-bottom: 4px;
     font-family: 'Consolas', monospace;
     font-size: 11px;
     background: #ffffff;
-    margin: 4px;
     border-radius: 4px;
     border: 1px solid #e2e8f0;
   }

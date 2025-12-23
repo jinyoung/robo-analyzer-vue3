@@ -30,6 +30,8 @@ interface Props {
   displayedNodes?: number  // 실제 표시된 노드 수
   hiddenNodes?: number     // limit으로 숨겨진 노드 수
   isProcessing?: boolean
+  isLimitApplied?: boolean  // limit 적용 여부
+  maxDisplayNodes?: number  // 최대 표시 노드 수
 }
 
 interface PropertyItem {
@@ -57,7 +59,9 @@ const props = withDefaults(defineProps<Props>(), {
   totalRelationships: 0,
   displayedNodes: 0,
   hiddenNodes: 0,
-  isProcessing: false
+  isProcessing: false,
+  isLimitApplied: false,
+  maxDisplayNodes: 500
 })
 
 
@@ -229,10 +233,13 @@ function toggleExpand(key: string): void {
         <!-- 요약 (하단 고정) -->
         <div class="display-summary">
           <div class="summary-main">
-            <span class="summary-icon">📊</span>
-            <span>{{ displayedNodes || totalNodes }} 노드, {{ totalRelationships }} 관계</span>
+            <span>Displaying {{ displayedNodes || totalNodes }} nodes, {{ totalRelationships }} relationships.</span>
           </div>
-          <div class="summary-detail" v-if="hiddenNodes > 0">
+          <div class="limit-warning" v-if="isLimitApplied">
+            <span class="warning-text">limit {{ maxDisplayNodes.toLocaleString() }}개만 표시 중</span>
+            <span class="hint">설정에서 변경 · 더블클릭으로 확장</span>
+          </div>
+          <div class="summary-detail" v-if="hiddenNodes > 0 && !isLimitApplied">
             <span class="hidden-badge">+{{ hiddenNodes }} 숨김</span>
             <span class="hint">더블클릭으로 확장</span>
           </div>
@@ -468,24 +475,33 @@ function toggleExpand(key: string): void {
 
 .display-summary {
   margin-top: auto;
-  padding: 12px;
-  border-top: 1px solid #e5e7eb;
+  padding: 16px 0 0 0;
   flex-shrink: 0;
-  background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
   position: sticky;
   bottom: 0;
   z-index: 10;
   
   .summary-main {
-    display: flex;
-    align-items: center;
-    gap: 8px;
     font-size: 13px;
-    font-weight: 600;
+    font-weight: 400;
+    color: #334155;
+  }
+  
+  .limit-warning {
+    margin-top: 8px;
+    font-size: 13px;
+    font-weight: 400;
     color: #334155;
     
-    .summary-icon {
-      font-size: 16px;
+    .warning-text {
+      color: #dc2626;
+      font-weight: 500;
+    }
+    
+    .hint {
+      color: #94a3b8;
+      font-size: 11px;
+      margin-left: 8px;
     }
   }
   
@@ -493,7 +509,7 @@ function toggleExpand(key: string): void {
     display: flex;
     align-items: center;
     gap: 8px;
-    margin-top: 6px;
+    margin-top: 8px;
     font-size: 11px;
     
     .hidden-badge {

@@ -10,8 +10,9 @@ import { storeToRefs } from 'pinia'
 import NvlGraph from './NvlGraph.vue'
 import NodeDetailPanel from './NodeDetailPanel.vue'
 import VueFlowClassDiagram from './VueFlowClassDiagram.vue'
-import { getClassName, getDirectory, isClassNode } from '@/utils/classDiagram'
+import { getClassName, getDirectory } from '@/utils/classDiagram'
 import type { GraphNode } from '@/types'
+import { useResize } from '@/composables/useResize'
 
 const projectStore = useProjectStore()
 const { 
@@ -30,12 +31,29 @@ const showNodePanel = ref(false)
 const showConsole = ref(false)
 const showSearch = ref(false)
 
+// 노드 패널 리사이즈
+const { value: panelWidth, isResizing: isPanelResizing, startResize: startPanelResize } = useResize({
+  direction: 'horizontal',
+  initialValue: 300,
+  min: 200,
+  max: 600,
+  fromEnd: true
+})
+
+// 콘솔 리사이즈
+const { value: consoleHeight, isResizing: isConsoleResizing, startResize: startConsoleResize } = useResize({
+  direction: 'vertical',
+  initialValue: 200,
+  min: 100,
+  max: 600,
+  fromEnd: true
+})
+
 const searchQuery = ref('')
 const selectedNode = ref<GraphNode | null>(null)
 const nvlGraphRef = ref<InstanceType<typeof NvlGraph> | null>(null)
 const diagramDepth = ref(3)
 const selectedClasses = ref<Array<{ className: string; directory: string }>>([])
-const showDepthSlider = ref(false)
 
 const statusType = computed(() => {
   if (!currentStep.value) return 'idle'
@@ -48,7 +66,13 @@ const statusType = computed(() => {
 
 const hasGraph = computed(() => graphData.value?.nodes.length > 0)
 const showUmlTab = computed(() => sourceType.value === 'java' || sourceType.value === 'python')
-const hasUmlDiagram = computed(() => selectedClasses.value.length > 0)
+
+// 로그가 있을 때 자동으로 콘솔 표시
+watch(graphMessages, (messages) => {
+  if (messages.length > 0 && !showConsole.value) {
+    showConsole.value = true
+  }
+}, { immediate: true })
 
 const filteredNodes = computed(() => {
   const query = searchQuery.value.trim().toLowerCase()
@@ -170,6 +194,15 @@ watch(hasGraph, (has, prev) => {
           @class-expand="handleVueFlowClassExpand"
         />
       </div>
+      
+      <!-- 플로팅: 우측 패널 토글 -->
+      <button 
+        v-if="!showNodePanel"
+        class="panel-toggle right"
+        @click="showNodePanel = !showNodePanel"
+      >
+        ‹
+      </button>
     </div>
     
     <!-- 플로팅: 좌측 상단 컨트롤 -->
@@ -179,7 +212,7 @@ watch(hasGraph, (has, prev) => {
           :class="{ active: activeView === 'graph' }"
           @click="activeView = 'graph'"
         >
-          그래프
+          Graph
         </button>
         <button 
           :class="{ active: activeView === 'uml', disabled: !showUmlTab }"
@@ -224,21 +257,12 @@ watch(hasGraph, (has, prev) => {
       </template>
     </div>
     
-    <!-- 플로팅: 우측 패널 토글 -->
-    <button 
-      class="panel-toggle right"
-      :class="{ open: showNodePanel }"
-      @click="showNodePanel = !showNodePanel"
-    >
-      {{ showNodePanel ? '›' : '‹' }}
-    </button>
-    
     <!-- 플로팅: 노드 패널 -->
     <Transition name="slide-right">
-      <div class="floating-panel right" v-if="showNodePanel">
+      <div class="floating-panel right" v-if="showNodePanel" :style="{ width: `${panelWidth}px` }">
         <div class="panel-header">
           <span>{{ selectedNode ? 'Node' : 'Overview' }}</span>
-          <button @click="showNodePanel = false">✕</button>
+          <button @click="showNodePanel = false">›</button>
         </div>
         <div class="panel-body">
           <NodeDetailPanel 
@@ -248,27 +272,45 @@ watch(hasGraph, (has, prev) => {
             :totalNodes="graphData?.nodes.length || 0"
             :totalRelationships="graphData?.links.length || 0"
             :displayedNodes="nvlGraphRef?.nodeCount?.() || graphData?.nodes.length || 0"
-            :hiddenNodes="nvlGraphRef?.hiddenNodeCount?.value || 0"
+            :hiddenNodes="(nvlGraphRef?.hiddenNodeCount as any)?.value ?? 0"
             :isProcessing="isProcessing"
+            :isLimitApplied="(nvlGraphRef?.isLimitApplied as any)?.value ?? false"
+            :maxDisplayNodes="500"
           />
         </div>
+        <!-- 리사이즈 핸들 -->
+        <div 
+          class="panel-resize-handle"
+          :class="{ resizing: isPanelResizing }"
+          @mousedown="startPanelResize"
+        ></div>
       </div>
     </Transition>
     
-    <!-- 플로팅: 콘솔 -->
+    <!-- 플로팅: 콘솔 토글 버튼 (콘솔이 닫혔을 때만 표시) -->
     <button 
+      v-if="!showConsole"
       class="console-toggle-btn"
-      :class="{ open: showConsole, [statusType]: true }"
+      :class="[statusType]"
       @click="showConsole = !showConsole"
     >
       <span class="status-dot"></span>
       콘솔
       <span class="count" v-if="graphMessages.length">{{ graphMessages.length }}</span>
-      <span class="arrow">{{ showConsole ? '▼' : '▲' }}</span>
     </button>
     
     <Transition name="slide-up">
-      <div class="floating-console" v-if="showConsole">
+      <div class="floating-console" v-if="showConsole" :style="{ height: `${consoleHeight}px` }">
+        <div class="console-header">
+          <span>콘솔</span>
+          <span class="console-count" v-if="graphMessages.length">{{ graphMessages.length }}</span>
+        </div>
+        <!-- 리사이즈 핸들 -->
+        <div 
+          class="console-resize-handle"
+          :class="{ resizing: isConsoleResizing }"
+          @mousedown="startConsoleResize"
+        ></div>
         <div class="console-content">
           <div 
             v-for="(msg, idx) in graphMessages" 
@@ -283,6 +325,10 @@ watch(hasGraph, (has, prev) => {
             로그가 없습니다
           </div>
         </div>
+        <!-- 콘솔 닫기 버튼 (하단 중앙) -->
+        <button class="console-close-btn-bottom" @click="showConsole = false">
+          <span class="arrow">▼</span>
+        </button>
       </div>
     </Transition>
     
@@ -570,34 +616,50 @@ watch(hasGraph, (has, prev) => {
 
 .panel-toggle {
   position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 18px;
-  height: 50px;
+  top: 8px;
+  width: 32px;
+  height: 32px;
   background: #ffffff;
   border: 1px solid #cbd5e1;
-  font-size: 12px;
-  color: #64748b;
+  font-size: 16px;
+  font-weight: 600;
+  color: #475569;
   cursor: pointer;
   z-index: 100;
   transition: all 0.15s;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
   
   &.right {
-    right: 0;
-    border-radius: 6px 0 0 6px;
-    border-right: none;
-    
-    &.open {
-      right: 300px;
-    }
+    right: 8px;
+    border-radius: 6px;
   }
   
   &:hover {
     background: #f1f5f9;
-    color: #475569;
+    color: #1e293b;
     border-color: #94a3b8;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  }
+}
+
+// ============================================================================
+// 리사이즈 핸들 공통 스타일
+// ============================================================================
+
+@mixin resize-handle-base {
+  background: transparent;
+  transition: background 0.15s;
+  z-index: 10;
+  
+  &:hover {
+    background: #cbd5e1;
+  }
+  
+  &.resizing {
+    background: #94a3b8;
   }
 }
 
@@ -608,17 +670,28 @@ watch(hasGraph, (has, prev) => {
 .floating-panel {
   position: absolute;
   top: 0;
-  bottom: 0;
-  width: 300px;
+  max-height: 100vh;
+  min-height: 200px;
   background: #ffffff;
-  border-left: 1px solid #cbd5e1;
+  border-left: 1px solid #e5e7eb;
+  border-bottom: 1px solid #e5e7eb;
   display: flex;
   flex-direction: column;
   z-index: 90;
-  box-shadow: -4px 0 12px rgba(0, 0, 0, 0.1);
+  box-shadow: -2px 0 8px rgba(0, 0, 0, 0.05);
   
   &.right {
     right: 0;
+  }
+  
+  .panel-resize-handle {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+    cursor: col-resize;
+    @include resize-handle-base;
   }
   
   .panel-header {
@@ -628,6 +701,7 @@ watch(hasGraph, (has, prev) => {
     padding: 10px 12px;
     background: #f1f5f9;
     border-bottom: 1px solid #cbd5e1;
+    flex-shrink: 0;
     
     span {
       font-size: 12px;
@@ -636,24 +710,27 @@ watch(hasGraph, (has, prev) => {
     }
     
     button {
-      width: 20px;
-      height: 20px;
+      width: 24px;
+      height: 24px;
       background: transparent;
       border: none;
-      color: #9ca3af;
+      color: #64748b;
       cursor: pointer;
       border-radius: 4px;
-      font-size: 12px;
+      font-size: 16px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      justify-content: center;
       
       &:hover {
         background: #e5e7eb;
-        color: #374151;
+        color: #1e293b;
       }
     }
   }
   
   .panel-body {
-    flex: 1;
     overflow-y: auto;
     padding: 8px;
   }
@@ -688,9 +765,6 @@ watch(hasGraph, (has, prev) => {
     box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
   }
   
-  &.open {
-    bottom: 120px;
-  }
   
   .status-dot {
     width: 6px;
@@ -741,20 +815,90 @@ watch(hasGraph, (has, prev) => {
   bottom: 0;
   left: 0;
   right: 0;
-  height: 112px;
   background: #f8fafc;
   border-top: 2px solid #cbd5e1;
   z-index: 90;
   box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.05);
+  display: flex;
+  flex-direction: column;
+  
+  .console-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: #ffffff;
+    border-bottom: 1px solid #e5e7eb;
+    font-size: 12px;
+    font-weight: 600;
+    color: #374151;
+    
+    .console-count {
+      padding: 2px 6px;
+      background: #3b82f6;
+      color: white;
+      border-radius: 8px;
+      font-size: 10px;
+      font-weight: 600;
+    }
+    
+  }
+  
+  .console-close-btn-bottom {
+    position: absolute;
+    bottom: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    color: #64748b;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    z-index: 10;
+    transition: all 0.15s;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
+    
+    .arrow {
+      font-size: 12px;
+    }
+    
+    &:hover {
+      background: #f1f5f9;
+      color: #1e293b;
+      border-color: #94a3b8;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+    }
+  }
+  
+  .console-resize-handle {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    cursor: row-resize;
+    z-index: 1;
+    @include resize-handle-base;
+  }
   
   .console-content {
-    height: 100%;
+    flex: 1;
     overflow-y: auto;
     padding: 8px 12px;
+    margin-top: 4px;
     font-family: 'Consolas', monospace;
     font-size: 11px;
     background: #ffffff;
-    margin: 4px;
+    margin-left: 4px;
+    margin-right: 4px;
+    margin-bottom: 4px;
     border-radius: 4px;
     border: 1px solid #e2e8f0;
   }

@@ -256,6 +256,50 @@ const activateTab = (tabId: string) => {
             @files-drop="handleFilesDrop" 
             @open-modal="handleOpenModal"
           />
+          
+          <!-- 업로드 가이드 -->
+          <div class="upload-guide">
+            <div class="guide-header">
+              <span class="guide-icon">💡</span>
+              <span class="guide-title">사용 가이드</span>
+            </div>
+            <div class="guide-content">
+              <div class="guide-item">
+                <span class="guide-step">1</span>
+                <div class="guide-text">
+                  <span class="guide-text-main">프로젝트 폴더 업로드</span>
+                  <span class="guide-text-detail">드래그 앤 드롭 또는 클릭하여 업로드</span>
+                </div>
+              </div>
+              <div class="guide-item">
+                <span class="guide-step">2</span>
+                <div class="guide-text">
+                  <span class="guide-text-main">파싱 실행</span>
+                  <span class="guide-text-detail">코드 구조 분석 및 AST 생성</span>
+                </div>
+              </div>
+              <div class="guide-item">
+                <span class="guide-step">3</span>
+                <div class="guide-text">
+                  <span class="guide-text-main">Understanding 실행</span>
+                  <span class="guide-text-detail">소스를 이해하여 그래프로 전환</span>
+                </div>
+              </div>
+              <div class="guide-item">
+                <span class="guide-step">4</span>
+                <div class="guide-text">
+                  <span class="guide-text-main">Convert 실행</span>
+                  <span class="guide-text-detail">타겟으로 전환하여 converting</span>
+                </div>
+              </div>
+            </div>
+            <div class="guide-tips">
+              <div class="tip-item">
+                <span class="tip-label">⚙️ 설정:</span>
+                <span class="tip-text">상단에서 소스/타겟 타입 선택, 설정 아이콘에서 노드 제한 및 UML 깊이 조정</span>
+              </div>
+            </div>
+          </div>
         </template>
         <template v-else>
           <div class="uploaded-trees">
@@ -337,11 +381,13 @@ const activateTab = (tabId: string) => {
         </div>
         
         <!-- 탭 콘텐츠 -->
-        <div class="viewer-content" ref="viewerContentRef">
+        <div class="viewer-content" ref="viewerContentRef" :class="{ 'has-content': activeTab }">
           <template v-if="activeTab">
-            <!-- JSON 파일 -->
-            <JsonViewer v-if="isJsonFile" :json="activeTab.content" />
-            <pre v-else class="code-viewer"><code>{{ activeTab.content }}</code></pre>
+            <div class="content-wrapper">
+              <!-- JSON 파일 -->
+              <JsonViewer v-if="isJsonFile" :json="activeTab.content" />
+              <pre v-else class="code-viewer"><code>{{ activeTab.content }}</code></pre>
+            </div>
           </template>
           <template v-else>
             <div class="empty-state">
@@ -403,6 +449,137 @@ const activateTab = (tabId: string) => {
   flex-direction: column;
   gap: var(--spacing-md);
   overflow: hidden;
+  
+  .drop-zone {
+    flex: 1;
+    min-height: 0;
+  }
+  
+  .upload-guide {
+    flex: 1;
+    min-height: 0;
+  }
+}
+
+.upload-guide {
+  padding: 16px;
+  background: #f8fafc;
+  border: 1px solid #e5e7eb;
+  border-radius: var(--radius-lg);
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  overflow-y: auto;
+  min-height: 0;
+  
+  // 커스텀 스크롤바 스타일
+  &::-webkit-scrollbar {
+    width: 6px;
+  }
+  
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  
+  &::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 3px;
+    
+    &:hover {
+      background: #94a3b8;
+    }
+  }
+  
+  // Firefox
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+  
+  .guide-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    
+    .guide-icon {
+      font-size: 14px;
+    }
+    
+    .guide-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: #374151;
+    }
+  }
+  
+  .guide-content {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    
+    .guide-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      
+      .guide-step {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 24px;
+        height: 24px;
+        background: #e5e7eb;
+        color: #6b7280;
+        border-radius: 4px;
+        font-size: 12px;
+        font-weight: 600;
+        flex-shrink: 0;
+        margin-top: 1px;
+      }
+      
+      .guide-text {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        
+        .guide-text-main {
+          font-size: 13px;
+          color: #374151;
+          font-weight: 600;
+        }
+        
+        .guide-text-detail {
+          font-size: 11px;
+          color: #6b7280;
+          line-height: 1.4;
+        }
+      }
+    }
+  }
+  
+  .guide-tips {
+    padding-top: 12px;
+    margin-top: 12px;
+    border-top: 1px solid #e5e7eb;
+    
+    .tip-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 6px;
+      font-size: 11px;
+      color: #6b7280;
+      line-height: 1.5;
+      
+      .tip-label {
+        font-weight: 600;
+        color: #4b5563;
+        flex-shrink: 0;
+      }
+      
+      .tip-text {
+        flex: 1;
+      }
+    }
+  }
 }
 
 .file-lists {
@@ -588,7 +765,8 @@ const activateTab = (tabId: string) => {
   background: var(--color-bg-tertiary);
   border-radius: var(--radius-md);
   overflow: hidden;
-  min-height: 0; // flex child가 제대로 shrink 되도록
+  min-height: 0;
+  height: 100%;
 }
 
 .tabs-header {
@@ -690,8 +868,17 @@ const activateTab = (tabId: string) => {
   overflow: auto;
   padding: var(--spacing-md);
   min-height: 0;
-  max-height: 60vh;
   background: var(--color-bg-tertiary);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  
+  &.has-content {
+    align-items: flex-start;
+    justify-content: flex-start;
+  }
   
   // 스크롤바 항상 표시
   &::-webkit-scrollbar {
@@ -717,6 +904,11 @@ const activateTab = (tabId: string) => {
   }
 }
 
+.content-wrapper {
+  width: 100%;
+  max-width: 100%;
+}
+
 .code-viewer {
   margin: 0;
   font-family: var(--font-mono);
@@ -724,6 +916,8 @@ const activateTab = (tabId: string) => {
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-all;
+  width: 100%;
+  max-width: 100%;
   
   code {
     color: var(--color-text-primary);

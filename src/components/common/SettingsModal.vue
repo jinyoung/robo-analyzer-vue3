@@ -38,7 +38,7 @@ const emit = defineEmits<{
 const sessionStore = useSessionStore()
 const projectStore = useProjectStore()
 
-const { sessionId } = storeToRefs(sessionStore)
+const { sessionId, apiKey: storeApiKey } = storeToRefs(sessionStore)
 const { projectName, graphData } = storeToRefs(projectStore)
 
 // ============================================================================
@@ -54,6 +54,13 @@ const umlDepth = ref(3)
 /** API Key (마스킹) */
 const apiKey = ref('')
 const showApiKey = ref(false)
+
+// store의 apiKey와 동기화
+watch(storeApiKey, (value) => {
+  if (value) {
+    apiKey.value = value
+  }
+}, { immediate: true })
 
 /** 활성 설정 섹션 */
 const activeSection = ref<'display' | 'api' | 'session' | 'danger'>('display')
@@ -83,17 +90,6 @@ function handleClose() {
   emit('close')
 }
 
-function handleSaveNodeLimit() {
-  emit('update:nodeLimit', nodeLimit.value)
-}
-
-function handleSaveUmlDepth() {
-  emit('update:umlDepth', umlDepth.value)
-}
-
-function handleSaveApiKey() {
-  sessionStore.setApiKey(apiKey.value)
-}
 
 function handleCopySessionId() {
   navigator.clipboard.writeText(sessionId.value)
@@ -118,10 +114,46 @@ function handleDeleteAll() {
 // 초기화
 // ============================================================================
 
+// 설정값 자동 저장
+watch(nodeLimit, (value) => {
+  if (props.isOpen) {
+    localStorage.setItem('nodeLimit', String(value))
+    emit('update:nodeLimit', value)
+    window.dispatchEvent(new CustomEvent('nodeLimitChange', { detail: value }))
+  }
+})
+
+watch(umlDepth, (value) => {
+  if (props.isOpen) {
+    localStorage.setItem('umlDepth', String(value))
+    emit('update:umlDepth', value)
+    window.dispatchEvent(new CustomEvent('umlDepthChange', { detail: value }))
+  }
+})
+
+watch(apiKey, (value) => {
+  if (props.isOpen && value) {
+    sessionStore.setApiKey(value)
+  }
+})
+
 watch(() => props.isOpen, (isOpen) => {
   if (isOpen) {
     // 모달 열릴 때 현재 설정값 로드
     activeSection.value = 'display'
+    // localStorage에서 현재 값 로드
+    const savedNodeLimit = localStorage.getItem('nodeLimit')
+    if (savedNodeLimit) {
+      nodeLimit.value = parseInt(savedNodeLimit)
+    }
+    const savedUmlDepth = localStorage.getItem('umlDepth')
+    if (savedUmlDepth) {
+      umlDepth.value = parseInt(savedUmlDepth)
+    }
+    // API Key 로드
+    if (storeApiKey.value) {
+      apiKey.value = storeApiKey.value
+    }
   }
 })
 </script>
@@ -170,7 +202,7 @@ watch(() => props.isOpen, (isOpen) => {
                 @click="activeSection = 'danger'"
               >
                 <span>⚠️</span>
-                위험 영역
+                데이터 관리
               </button>
             </nav>
 
@@ -197,11 +229,6 @@ watch(() => props.isOpen, (isOpen) => {
                       step="100"
                     />
                     <span class="unit">개</span>
-                    <button class="save-btn" @click="handleSaveNodeLimit">저장</button>
-                  </div>
-                  <div class="setting-info">
-                    현재 그래프: <strong>{{ currentNodeCount.toLocaleString() }}</strong> 노드, 
-                    <strong>{{ currentRelCount.toLocaleString() }}</strong> 관계
                   </div>
                 </div>
 
@@ -222,7 +249,6 @@ watch(() => props.isOpen, (isOpen) => {
                       step="1"
                     />
                     <span class="value">{{ umlDepth }}</span>
-                    <button class="save-btn" @click="handleSaveUmlDepth">저장</button>
                   </div>
                 </div>
               </div>
@@ -253,7 +279,6 @@ watch(() => props.isOpen, (isOpen) => {
                         {{ showApiKey ? '🙈' : '👁️' }}
                       </button>
                     </div>
-                    <button class="save-btn" @click="handleSaveApiKey">저장</button>
                   </div>
                 </div>
               </div>
@@ -285,27 +310,11 @@ watch(() => props.isOpen, (isOpen) => {
                   </div>
                 </div>
 
-                <div class="setting-item readonly">
-                  <div class="setting-label">
-                    <span class="label-text">그래프 데이터</span>
-                    <span class="label-desc">현재 로드된 그래프 통계입니다.</span>
-                  </div>
-                  <div class="setting-control stats">
-                    <div class="stat-item">
-                      <span class="stat-value">{{ currentNodeCount.toLocaleString() }}</span>
-                      <span class="stat-label">노드</span>
-                    </div>
-                    <div class="stat-item">
-                      <span class="stat-value">{{ currentRelCount.toLocaleString() }}</span>
-                      <span class="stat-label">관계</span>
-                    </div>
-                  </div>
-                </div>
               </div>
 
-              <!-- 위험 영역 -->
+              <!-- 데이터 관리 -->
               <div v-if="activeSection === 'danger'" class="settings-section danger-zone">
-                <h3>⚠️ 위험 영역</h3>
+                <h3>⚠️ 데이터 관리</h3>
                 
                 <div class="setting-item">
                   <div class="setting-label">
@@ -351,8 +360,7 @@ watch(() => props.isOpen, (isOpen) => {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(4px);
+  background: rgba(0, 0, 0, 0.1);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -361,8 +369,9 @@ watch(() => props.isOpen, (isOpen) => {
 
 .modal-container {
   width: 700px;
+  height: 600px;
   max-width: 90vw;
-  max-height: 80vh;
+  max-height: 90vh;
   background: #ffffff;
   border-radius: 16px;
   box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
@@ -412,9 +421,9 @@ watch(() => props.isOpen, (isOpen) => {
     transition: all 0.15s;
 
     &:hover {
-      background: #fee2e2;
-      border-color: #fecaca;
-      color: #dc2626;
+      background: #f1f5f9;
+      border-color: #cbd5e1;
+      color: #334155;
     }
   }
 }
@@ -468,8 +477,10 @@ watch(() => props.isOpen, (isOpen) => {
     }
 
     &.active {
-      background: #3b82f6;
-      color: white;
+      background: #f8fafc;
+      color: #1e293b;
+      font-weight: 600;
+      border-left: 2px solid #cbd5e1;
     }
   }
 }
@@ -482,6 +493,30 @@ watch(() => props.isOpen, (isOpen) => {
   flex: 1;
   padding: 24px;
   overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+  
+  // 커스텀 스크롤바
+  &::-webkit-scrollbar {
+    width: 6px;
+  }
+  
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  
+  &::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 3px;
+    
+    &:hover {
+      background: #94a3b8;
+    }
+  }
+  
+  // Firefox
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
 }
 
 .settings-section {
@@ -496,8 +531,8 @@ watch(() => props.isOpen, (isOpen) => {
 
   &.danger-zone {
     h3 {
-      color: #dc2626;
-      border-color: #fecaca;
+      color: #1e293b;
+      border-color: #e2e8f0;
     }
   }
 }
@@ -560,8 +595,8 @@ watch(() => props.isOpen, (isOpen) => {
 
     &:focus {
       outline: none;
-      border-color: #3b82f6;
-      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+      border-color: #64748b;
+      box-shadow: 0 0 0 3px rgba(100, 116, 139, 0.1);
     }
   }
 
@@ -578,7 +613,7 @@ watch(() => props.isOpen, (isOpen) => {
 
   .value {
     font-weight: 600;
-    color: #3b82f6;
+    color: #64748b;
   }
 
   &.api-key-control {
@@ -623,7 +658,7 @@ watch(() => props.isOpen, (isOpen) => {
       .stat-value {
         font-size: 20px;
         font-weight: 700;
-        color: #3b82f6;
+        color: #64748b;
       }
 
       .stat-label {
@@ -642,7 +677,7 @@ watch(() => props.isOpen, (isOpen) => {
   color: #64748b;
 
   strong {
-    color: #3b82f6;
+    color: #64748b;
   }
 }
 
@@ -652,7 +687,7 @@ watch(() => props.isOpen, (isOpen) => {
 
 .save-btn {
   padding: 8px 16px;
-  background: #3b82f6;
+  background: #64748b;
   color: white;
   border: none;
   border-radius: 8px;
@@ -662,7 +697,7 @@ watch(() => props.isOpen, (isOpen) => {
   transition: all 0.15s;
 
   &:hover {
-    background: #2563eb;
+    background: #475569;
   }
 }
 
@@ -682,9 +717,9 @@ watch(() => props.isOpen, (isOpen) => {
 
 .danger-btn {
   padding: 10px 20px;
-  background: #dc2626;
-  color: white;
-  border: none;
+  background: transparent;
+  color: #dc2626;
+  border: 1px solid #cbd5e1;
   border-radius: 8px;
   font-size: 13px;
   font-weight: 500;
@@ -692,14 +727,20 @@ watch(() => props.isOpen, (isOpen) => {
   transition: all 0.15s;
 
   &:hover {
-    background: #b91c1c;
+    background: #fef2f2;
+    border-color: #fecaca;
+    color: #b91c1c;
   }
 
   &.secondary {
-    background: #f97316;
+    background: transparent;
+    color: #64748b;
+    border: 1px solid #cbd5e1;
 
     &:hover {
-      background: #ea580c;
+      background: #f8fafc;
+      border-color: #94a3b8;
+      color: #475569;
     }
   }
 }
