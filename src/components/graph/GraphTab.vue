@@ -4,7 +4,7 @@
  * 그래프 및 UML 다이어그램 탭 - 개선된 플로팅 UI
  */
 
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useProjectStore } from '@/stores/project'
 import { storeToRefs } from 'pinia'
 import NvlGraph from './NvlGraph.vue'
@@ -52,8 +52,49 @@ const { value: consoleHeight, isResizing: isConsoleResizing, startResize: startC
 const searchQuery = ref('')
 const selectedNode = ref<GraphNode | null>(null)
 const nvlGraphRef = ref<InstanceType<typeof NvlGraph> | null>(null)
-const diagramDepth = ref(3)
 const selectedClasses = ref<Array<{ className: string; directory: string }>>([])
+
+// 설정에서 값 가져오기 (localStorage 또는 기본값)
+const umlDepth = ref(3)
+const nodeLimit = ref(500)
+
+// localStorage에서 값 로드 (안전하게)
+try {
+  const savedUmlDepth = localStorage.getItem('umlDepth')
+  if (savedUmlDepth) {
+    const parsed = parseInt(savedUmlDepth)
+    if (!isNaN(parsed)) umlDepth.value = parsed
+  }
+  const savedNodeLimit = localStorage.getItem('nodeLimit')
+  if (savedNodeLimit) {
+    const parsed = parseInt(savedNodeLimit)
+    if (!isNaN(parsed)) nodeLimit.value = parsed
+  }
+} catch (e) {
+  // localStorage 접근 불가 시 기본값 사용
+  console.warn('localStorage 접근 실패:', e)
+}
+
+// 설정 변경 이벤트 리스너
+function handleUmlDepthChange(event: Event) {
+  const customEvent = event as CustomEvent
+  umlDepth.value = customEvent.detail
+}
+
+function handleNodeLimitChange(event: Event) {
+  const customEvent = event as CustomEvent
+  nodeLimit.value = customEvent.detail
+}
+
+onMounted(() => {
+  window.addEventListener('umlDepthChange', handleUmlDepthChange)
+  window.addEventListener('nodeLimitChange', handleNodeLimitChange)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('umlDepthChange', handleUmlDepthChange)
+  window.removeEventListener('nodeLimitChange', handleNodeLimitChange)
+})
 
 const statusType = computed(() => {
   if (!currentStep.value) return 'idle'
@@ -66,6 +107,12 @@ const statusType = computed(() => {
 
 const hasGraph = computed(() => graphData.value?.nodes.length > 0)
 const showUmlTab = computed(() => sourceType.value === 'java' || sourceType.value === 'python')
+
+// 표시된 관계 수 (반응형으로 접근)
+const displayedRelationshipsCount = computed(() => {
+  const count = nvlGraphRef.value?.displayedRelationshipCount?.()
+  return count ?? 0
+})
 
 // 로그가 있을 때 자동으로 콘솔 표시
 watch(graphMessages, (messages) => {
@@ -99,11 +146,6 @@ function formatTime(timestamp: string): string {
 function handleNodeSelect(node: GraphNode | null): void {
   selectedNode.value = node
   if (node) showNodePanel.value = true
-}
-
-function handleNodeDoubleClick(node: GraphNode): void {
-  selectedNode.value = node
-  showNodePanel.value = true
 }
 
 function handleSearchSelect(node: GraphNode): void {
@@ -171,8 +213,8 @@ watch(hasGraph, (has, prev) => {
             ref="nvlGraphRef"
             :graphData="graphData!"
             :selectedNodeId="selectedNode?.id"
+            :maxNodes="nodeLimit"
             @node-select="handleNodeSelect"
-            @node-double-click="handleNodeDoubleClick"
           />
         </template>
         <template v-else>
@@ -189,7 +231,7 @@ watch(hasGraph, (has, prev) => {
           :graph-nodes="graphData?.nodes || []"
           :graph-links="graphData?.links || []"
           :selected-classes="selectedClasses"
-          :depth="diagramDepth"
+          :depth="umlDepth"
           @class-click="handleVueFlowClassClick"
           @class-expand="handleVueFlowClassExpand"
         />
@@ -223,14 +265,16 @@ watch(hasGraph, (has, prev) => {
         </button>
       </div>
       
-      <button class="control-btn" @click="showSearch = !showSearch" title="검색">
-        🔍
-      </button>
+      <template v-if="activeView === 'uml'">
+        <button class="control-btn" @click="showSearch = !showSearch" title="클래스 명 검색">
+          🔍
+        </button>
+      </template>
       
-      <div class="search-panel" v-if="showSearch">
+      <div class="search-panel" v-if="showSearch && activeView === 'uml'">
         <input 
           v-model="searchQuery"
-          placeholder="클래스/노드 검색..."
+          placeholder="클래스 명 검색..."
           @keyup.escape="showSearch = false"
           autofocus
         />
@@ -241,20 +285,21 @@ watch(hasGraph, (has, prev) => {
             @click="handleSearchSelect(node)"
           >
             <span class="tag">{{ node.labels?.[0] }}</span>
-            {{ node.properties?.name || node.properties?.class_name || node.id }}
+            <span class="node-info">
+              <span class="node-name">{{ node.properties?.name || node.properties?.class_name || node.id }}</span>
+              <span class="node-dir" v-if="getDirectory(node)">{{ getDirectory(node) }}</span>
+            </span>
           </button>
         </div>
       </div>
       
-      <template v-if="activeView === 'uml'">
-        <div class="selected-tags" v-if="selectedClasses.length > 0">
-          <span v-for="cls in selectedClasses" :key="`${cls.directory}::${cls.className}`" class="tag">
-            {{ cls.className }}
-            <button @click="removeSelectedClass(cls.className, cls.directory)">✕</button>
-          </span>
-          <button class="clear-btn" @click="clearSelectedClasses">지우기</button>
-        </div>
-      </template>
+      <div class="selected-tags" v-if="activeView === 'uml' && selectedClasses.length > 0">
+        <span v-for="cls in selectedClasses" :key="`${cls.directory}::${cls.className}`" class="tag">
+          {{ cls.className }}
+          <button @click="removeSelectedClass(cls.className, cls.directory)">✕</button>
+        </span>
+        <button class="clear-btn" @click="clearSelectedClasses">지우기</button>
+      </div>
     </div>
     
     <!-- 플로팅: 노드 패널 -->
@@ -272,10 +317,11 @@ watch(hasGraph, (has, prev) => {
             :totalNodes="graphData?.nodes.length || 0"
             :totalRelationships="graphData?.links.length || 0"
             :displayedNodes="nvlGraphRef?.nodeCount?.() || graphData?.nodes.length || 0"
-            :hiddenNodes="(nvlGraphRef?.hiddenNodeCount as any)?.value ?? 0"
+            :displayedRelationships="displayedRelationshipsCount"
+            :hiddenNodes="nvlGraphRef?.hiddenNodeCount?.() ?? 0"
             :isProcessing="isProcessing"
-            :isLimitApplied="(nvlGraphRef?.isLimitApplied as any)?.value ?? false"
-            :maxDisplayNodes="500"
+            :isLimitApplied="nvlGraphRef?.isLimitApplied?.() ?? false"
+            :maxDisplayNodes="nodeLimit"
           />
         </div>
         <!-- 리사이즈 핸들 -->
@@ -332,11 +378,6 @@ watch(hasGraph, (has, prev) => {
       </div>
     </Transition>
     
-    <!-- 플로팅: 정보 -->
-    <div class="floating-info" v-if="hasGraph">
-      <span>{{ graphData?.nodes.length }} 노드</span>
-      <span>{{ graphData?.links.length }} 관계</span>
-    </div>
   </div>
 </template>
 
@@ -405,7 +446,7 @@ watch(hasGraph, (has, prev) => {
   top: 8px;
   left: 8px;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 6px;
   z-index: 100;
 }
@@ -472,8 +513,8 @@ watch(hasGraph, (has, prev) => {
     border-color: #cbd5e1;
     color: #475569;
   }
-  
 }
+
 
 // ============================================================================
 // 검색 패널
@@ -508,21 +549,21 @@ watch(hasGraph, (has, prev) => {
     position: absolute;
     top: 100%;
     left: 0;
-    width: 260px;
+    width: 320px;
     margin-top: 4px;
     background: #ffffff;
     border: 1px solid #e5e7eb;
     border-radius: 6px;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-    max-height: 200px;
+    max-height: 280px;
     overflow-y: auto;
     
     button {
       display: flex;
-      align-items: center;
+      align-items: flex-start;
       gap: 8px;
       width: 100%;
-      padding: 8px 10px;
+      padding: 10px 12px;
       background: transparent;
       border: none;
       text-align: left;
@@ -546,6 +587,29 @@ watch(hasGraph, (has, prev) => {
         color: white;
         border-radius: 4px;
         font-weight: 600;
+        flex-shrink: 0;
+        margin-top: 2px;
+      }
+      
+      .node-info {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        min-width: 0;
+        flex: 1;
+        
+        .node-name {
+          font-weight: 500;
+          color: #1f2937;
+        }
+        
+        .node-dir {
+          font-size: 10px;
+          color: #6b7280;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
       }
     }
   }
@@ -947,27 +1011,6 @@ watch(hasGraph, (has, prev) => {
     text-align: center;
     padding: 16px;
   }
-}
-
-// ============================================================================
-// 플로팅 정보
-// ============================================================================
-
-.floating-info {
-  position: absolute;
-  bottom: 8px;
-  left: 8px;
-  display: flex;
-  gap: 10px;
-  padding: 6px 12px;
-  background: #ffffff;
-  border: 1px solid #e5e7eb;
-  border-radius: 16px;
-  font-size: 11px;
-  font-weight: 600;
-  color: #6b7280;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
-  z-index: 10;
 }
 
 // ============================================================================

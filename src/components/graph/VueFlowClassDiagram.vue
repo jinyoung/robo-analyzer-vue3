@@ -60,7 +60,7 @@ const emit = defineEmits<{
 // VueFlow 설정
 // ============================================================================
 
-const { fitView, zoomIn, zoomOut } = useVueFlow()
+const { fitView } = useVueFlow()
 
 // ============================================================================
 // 상태
@@ -352,28 +352,39 @@ function buildDiagram(): void {
     }
   })
   
-  // 5. VueFlow 엣지 생성
+  // 5. VueFlow 엣지 생성 (머메이드 스타일)
   edges.value = data.relationships.map(rel => {
-    const style = ARROW_STYLES[rel.type] || ARROW_STYLES.ASSOCIATION
+    const arrowStyle = ARROW_STYLES[rel.type] || ARROW_STYLES.ASSOCIATION
+    const isDependency = rel.type === 'DEPENDENCY'
+    const lineColor = isDependency ? '#666666' : '#333333'
+    
+    // style 문자열을 CSSProperties 객체로 변환
+    const styleObj: Record<string, string> = {}
+    const styleParts = arrowStyle.style.split(';').filter(Boolean)
+    for (const part of styleParts) {
+      const [key, value] = part.split(':').map(s => s.trim())
+      if (key && value) {
+        const cssKey = key.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())
+        styleObj[cssKey] = value
+      }
+    }
     
     return {
       id: rel.id,
       source: rel.source,
       target: rel.target,
       type: 'smoothstep',
-      animated: rel.type === 'DEPENDENCY',
+      animated: false,
       label: rel.label || '',
-      labelStyle: { fontSize: 10, fill: '#6b7280' },
-      style: style.style,
+      labelStyle: { fontSize: 10, fill: '#333333', fontWeight: 500 },
+      labelBgStyle: { fill: '#ffffff', fillOpacity: 0.9 },
+      style: styleObj,
       markerEnd: {
-        type: style.markerEnd as 'arrow' | 'arrowclosed',
-        color: style.style.includes('#4f46e5') ? '#4f46e5' 
-             : style.style.includes('#059669') ? '#059669'
-             : style.style.includes('#dc2626') ? '#dc2626'
-             : '#6b7280'
-      },
+        type: arrowStyle.markerEnd as any,
+        color: lineColor
+      } as any,
       data: { relationship: rel }
-    }
+    } as unknown as Edge
   })
   
   // 6. 뷰 맞추기
@@ -413,13 +424,33 @@ function onNodeDoubleClick(event: NodeMouseEvent): void {
 // 워처
 // ============================================================================
 
-// props 변경 시 다이어그램 재생성
+// selectedClasses 변경 시 다이어그램 재생성
 watch(
-  () => [props.selectedClasses, props.depth, props.graphNodes.length],
+  () => props.selectedClasses,
   () => {
     buildDiagram()
   },
   { deep: true, immediate: true }
+)
+
+// depth 변경 시 다이어그램 재생성
+watch(
+  () => props.depth,
+  () => {
+    if (props.selectedClasses.length > 0) {
+      buildDiagram()
+    }
+  }
+)
+
+// graphNodes 변경 시 다이어그램 재생성
+watch(
+  () => props.graphNodes.length,
+  () => {
+    if (props.selectedClasses.length > 0) {
+      buildDiagram()
+    }
+  }
 )
 
 // ============================================================================
@@ -548,41 +579,58 @@ onMounted(() => {
       </template>
     </VueFlow>
     
-    <!-- 범례 -->
+    <!-- 범례 + 통계 (노드패널 버튼 바로 아래) -->
     <div class="legend" v-if="!isEmpty">
       <div class="legend-title">관계 타입</div>
       <div class="legend-items">
         <div class="legend-item">
-          <span class="line extends"></span>
+          <svg class="legend-icon" viewBox="0 0 40 16">
+            <line x1="0" y1="8" x2="30" y2="8" stroke="#333" stroke-width="2"/>
+            <polygon points="30,4 38,8 30,12" fill="none" stroke="#333" stroke-width="1.5"/>
+          </svg>
           <span>상속 (extends)</span>
         </div>
         <div class="legend-item">
-          <span class="line implements"></span>
+          <svg class="legend-icon" viewBox="0 0 40 16">
+            <line x1="0" y1="8" x2="30" y2="8" stroke="#333" stroke-width="2" stroke-dasharray="4 3"/>
+            <polygon points="30,4 38,8 30,12" fill="none" stroke="#333" stroke-width="1.5"/>
+          </svg>
           <span>구현 (implements)</span>
         </div>
         <div class="legend-item">
-          <span class="line composition"></span>
+          <svg class="legend-icon" viewBox="0 0 40 16">
+            <polygon points="0,8 6,4 12,8 6,12" fill="#333"/>
+            <line x1="12" y1="8" x2="40" y2="8" stroke="#333" stroke-width="2"/>
+          </svg>
           <span>합성 (composition)</span>
         </div>
         <div class="legend-item">
-          <span class="line aggregation"></span>
+          <svg class="legend-icon" viewBox="0 0 40 16">
+            <polygon points="0,8 6,4 12,8 6,12" fill="none" stroke="#333" stroke-width="1.5"/>
+            <line x1="12" y1="8" x2="40" y2="8" stroke="#333" stroke-width="2"/>
+          </svg>
           <span>집합 (aggregation)</span>
         </div>
         <div class="legend-item">
-          <span class="line association"></span>
+          <svg class="legend-icon" viewBox="0 0 40 16">
+            <line x1="0" y1="8" x2="32" y2="8" stroke="#333" stroke-width="2"/>
+            <polyline points="28,4 36,8 28,12" fill="none" stroke="#333" stroke-width="2"/>
+          </svg>
           <span>연관 (association)</span>
         </div>
         <div class="legend-item">
-          <span class="line dependency"></span>
+          <svg class="legend-icon" viewBox="0 0 40 16">
+            <line x1="0" y1="8" x2="32" y2="8" stroke="#666" stroke-width="1.5" stroke-dasharray="3 2"/>
+            <polyline points="28,4 36,8 28,12" fill="none" stroke="#666" stroke-width="1.5"/>
+          </svg>
           <span>의존 (dependency)</span>
         </div>
       </div>
-    </div>
-    
-    <!-- 통계 -->
-    <div class="diagram-stats" v-if="diagramData">
-      <span>클래스 {{ diagramData.classes.length }}개</span>
-      <span>관계 {{ diagramData.relationships.length }}개</span>
+      <div class="legend-stats" v-if="diagramData">
+        <span>클래스 {{ diagramData.classes.length }}개</span>
+        <span class="divider">·</span>
+        <span>관계 {{ diagramData.relationships.length }}개</span>
+      </div>
     </div>
   </div>
 </template>
@@ -632,17 +680,16 @@ onMounted(() => {
 }
 
 // ============================================================================
-// 클래스 노드 (UML 클래스 다이어그램 표준 디자인)
-// 참고: https://brownbears.tistory.com/577
+// 클래스 노드 (머메이드 스타일 UML 클래스 다이어그램)
 // ============================================================================
 
 // 머메이드 스타일 클래스 노드
 .class-node {
   background: #ffffde;
-  border: 1px solid #333333;
+  border: 2px solid #333333;
   border-radius: 0;
-  min-width: 180px;
-  max-width: 320px;
+  min-width: 200px;
+  max-width: 340px;
   font-size: 12px;
   overflow: hidden;
   cursor: pointer;
@@ -658,30 +705,100 @@ onMounted(() => {
     }
   }
   
-  // 인터페이스: 파란 배경
+  // 인터페이스: 주황색 배경 + 사선 패턴 (머메이드 스타일)
   &.is-interface {
-    background: #e6f3ff;
-    border-color: #0066cc;
+    background: 
+      repeating-linear-gradient(
+        135deg,
+        transparent,
+        transparent 4px,
+        rgba(255, 140, 0, 0.15) 4px,
+        rgba(255, 140, 0, 0.15) 8px
+      ),
+      #fff4e6;
+    border-color: #ff8c00;
     
     .class-header {
-      background: #cce5ff;
-      border-color: #0066cc;
+      background: 
+        repeating-linear-gradient(
+          135deg,
+          transparent,
+          transparent 4px,
+          rgba(255, 140, 0, 0.2) 4px,
+          rgba(255, 140, 0, 0.2) 8px
+        ),
+        #ffe4c4;
+      border-color: #ff8c00;
+    }
+    
+    .class-section {
+      background: 
+        repeating-linear-gradient(
+          135deg,
+          transparent,
+          transparent 4px,
+          rgba(255, 140, 0, 0.1) 4px,
+          rgba(255, 140, 0, 0.1) 8px
+        ),
+        #fff8f0;
     }
   }
   
-  // Enum: 연두색 배경
+  // Enum: 노란색 점선 테두리 (머메이드 스타일)
   &.is-enum {
-    background: #e6ffe6;
-    border-color: #339933;
+    background: #fffacd;
+    border-style: dashed;
+    border-color: #b8860b;
     
     .class-header {
-      background: #ccffcc;
-      border-color: #339933;
+      background: #fff8dc;
+      border-style: dashed;
+      border-color: #b8860b;
+    }
+    
+    .class-section {
+      background: #fffacd;
     }
   }
   
-  // 추상 클래스: 이탤릭
+  // 추상 클래스: 파란색 배경 + 사선 패턴 (머메이드 스타일)
   &.is-abstract {
+    background: 
+      repeating-linear-gradient(
+        135deg,
+        transparent,
+        transparent 4px,
+        rgba(100, 149, 237, 0.12) 4px,
+        rgba(100, 149, 237, 0.12) 8px
+      ),
+      #e6f0ff;
+    border-color: #4682b4;
+    
+    .class-header {
+      background: 
+        repeating-linear-gradient(
+          135deg,
+          transparent,
+          transparent 4px,
+          rgba(100, 149, 237, 0.18) 4px,
+          rgba(100, 149, 237, 0.18) 8px
+        ),
+        #cce0ff;
+      border-color: #4682b4;
+    }
+    
+    .class-section {
+      background: 
+        repeating-linear-gradient(
+          135deg,
+          transparent,
+          transparent 4px,
+          rgba(100, 149, 237, 0.08) 4px,
+          rgba(100, 149, 237, 0.08) 8px
+        ),
+        #f0f6ff;
+    }
+    
     .class-name {
       font-style: italic;
     }
@@ -689,8 +806,8 @@ onMounted(() => {
   
   // 선택된 클래스
   &.is-selected {
-    border-width: 2px;
-    box-shadow: 0 0 0 3px rgba(255, 165, 0, 0.4);
+    border-width: 3px;
+    box-shadow: 0 0 0 4px rgba(255, 165, 0, 0.5);
   }
 }
 
@@ -698,21 +815,23 @@ onMounted(() => {
 .class-header {
   background: #ffecb3;
   color: #333333;
-  padding: 8px 12px;
+  padding: 10px 14px;
   text-align: center;
-  border-bottom: 1px solid #333333;
+  border-bottom: 2px solid #333333;
   
   .stereotype {
-    font-size: 10px;
-    color: #666666;
-    margin-bottom: 2px;
+    font-size: 11px;
+    color: #555555;
+    margin-bottom: 3px;
+    font-weight: 500;
   }
   
   .class-name {
     font-weight: 700;
-    font-size: 13px;
+    font-size: 14px;
     word-break: break-word;
     color: #000000;
+    letter-spacing: 0.3px;
     
     &.italic {
       font-style: italic;
@@ -722,12 +841,12 @@ onMounted(() => {
 
 // 머메이드 스타일 섹션
 .class-section {
-  padding: 4px 8px;
-  min-height: 20px;
+  padding: 6px 10px;
+  min-height: 24px;
   background: #ffffde;
   
   &.methods {
-    border-top: 1px solid #333333;
+    border-top: 2px solid #333333;
   }
   
   .section-divider {
@@ -736,9 +855,9 @@ onMounted(() => {
   
   .empty-section {
     text-align: center;
-    color: #888888;
-    font-size: 10px;
-    padding: 2px 0;
+    color: #999999;
+    font-size: 11px;
+    padding: 4px 0;
   }
 }
 
@@ -747,61 +866,64 @@ onMounted(() => {
   font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
   font-size: 11px;
   color: #333333;
-  padding: 2px 4px;
-  line-height: 1.5;
+  padding: 3px 6px;
+  line-height: 1.6;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  border-radius: 2px;
   
   &:hover {
-    background: rgba(0, 0, 0, 0.05);
+    background: rgba(0, 0, 0, 0.06);
   }
   
   // 접근제어자 기호
   .visibility {
     display: inline-block;
-    width: 12px;
+    width: 14px;
     font-weight: 700;
-    color: #e74c3c;
   }
   
   // 멤버 이름
   .member-name {
-    font-weight: 500;
-    color: #000000;
+    font-weight: 600;
+    color: #1a1a1a;
   }
   
   // 타입
   .member-type {
-    color: #2980b9;
+    color: #0066cc;
+    font-weight: 500;
   }
   
   // 파라미터
   .params {
-    color: #666666;
+    color: #555555;
   }
   
   // 반환 타입
   .return-type {
-    color: #2980b9;
+    color: #0066cc;
+    font-weight: 500;
   }
   
   // 생성자
   &.constructor {
     .member-name {
-      color: #8e44ad;
+      color: #8b008b;
+      font-weight: 700;
     }
   }
 }
 
-// 필드 멤버 - private는 빨간색
+// 필드 멤버 - public은 초록색, private는 빨간색
 .field-member .visibility {
-  color: #e74c3c;
+  color: #cc0000;
 }
 
 // 메서드 멤버 - public은 초록색
 .method-member .visibility {
-  color: #27ae60;
+  color: #008800;
 }
 
 // 더보기
@@ -828,27 +950,28 @@ onMounted(() => {
 }
 
 // ============================================================================
-// 범례
+// 범례 (노드패널 버튼 바로 아래)
 // ============================================================================
 
 .legend {
   position: absolute;
-  top: 16px;
-  right: 16px;
-  background: white;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
+  top: 48px;
+  right: 8px;
+  background: #fffef8;
+  border: 1px solid #d4d4d4;
+  border-radius: 4px;
   padding: 12px 16px;
-  font-size: 11px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  font-size: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
   z-index: 10;
   
   .legend-title {
     font-weight: 600;
-    color: #374151;
-    margin-bottom: 8px;
-    padding-bottom: 6px;
-    border-bottom: 1px solid #e5e7eb;
+    color: #333333;
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #e5e5e5;
+    font-size: 13px;
   }
   
   .legend-items {
@@ -860,76 +983,30 @@ onMounted(() => {
   .legend-item {
     display: flex;
     align-items: center;
-    gap: 8px;
-    color: #6b7280;
+    gap: 10px;
+    color: #333333;
+    font-size: 12px;
     
-    .line {
-      width: 24px;
-      height: 2px;
-      border-radius: 1px;
-      
-      &.extends {
-        background: #4f46e5;
-      }
-      
-      &.implements {
-        background: #4f46e5;
-        background: repeating-linear-gradient(
-          90deg,
-          #4f46e5 0px,
-          #4f46e5 4px,
-          transparent 4px,
-          transparent 7px
-        );
-      }
-      
-      &.composition {
-        background: #dc2626;
-      }
-      
-      &.aggregation {
-        background: #059669;
-      }
-      
-      &.association {
-        background: #6b7280;
-      }
-      
-      &.dependency {
-        background: repeating-linear-gradient(
-          90deg,
-          #9ca3af 0px,
-          #9ca3af 3px,
-          transparent 3px,
-          transparent 6px
-        );
-      }
+    .legend-icon {
+      width: 40px;
+      height: 16px;
+      flex-shrink: 0;
     }
   }
-}
-
-// ============================================================================
-// 통계
-// ============================================================================
-
-.diagram-stats {
-  position: absolute;
-  bottom: 16px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  gap: 16px;
-  padding: 8px 16px;
-  background: white;
-  border: 1px solid #e2e8f0;
-  border-radius: 20px;
-  font-size: 12px;
-  color: #64748b;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-  z-index: 10;
   
-  span {
-    font-family: 'Consolas', 'Monaco', monospace;
+  .legend-stats {
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px solid #e5e5e5;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: #666;
+    
+    .divider {
+      color: #ccc;
+    }
   }
 }
 

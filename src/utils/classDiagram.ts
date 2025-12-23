@@ -36,14 +36,14 @@ export const VISIBILITY_MAP: Record<string, string> = {
   default: '~'
 }
 
-/** 관계 화살표 스타일 */
+/** 관계 화살표 스타일 (머메이드 스타일) */
 export const ARROW_STYLES: Record<string, { markerEnd: string; style: string; label?: string }> = {
-  EXTENDS: { markerEnd: 'arrowclosed', style: 'stroke: #4f46e5; stroke-width: 2px;' },
-  IMPLEMENTS: { markerEnd: 'arrowclosed', style: 'stroke: #4f46e5; stroke-width: 2px; stroke-dasharray: 5 5;' },
-  ASSOCIATION: { markerEnd: 'arrow', style: 'stroke: #6b7280; stroke-width: 1.5px;' },
-  AGGREGATION: { markerEnd: 'arrow', style: 'stroke: #059669; stroke-width: 2px;' },
-  COMPOSITION: { markerEnd: 'arrow', style: 'stroke: #dc2626; stroke-width: 2px;' },
-  DEPENDENCY: { markerEnd: 'arrow', style: 'stroke: #9ca3af; stroke-width: 1px; stroke-dasharray: 3 3;' }
+  EXTENDS: { markerEnd: 'arrowclosed', style: 'stroke: #333333; stroke-width: 2px;' },
+  IMPLEMENTS: { markerEnd: 'arrowclosed', style: 'stroke: #333333; stroke-width: 2px; stroke-dasharray: 6 4;' },
+  ASSOCIATION: { markerEnd: 'arrow', style: 'stroke: #333333; stroke-width: 1.5px;' },
+  AGGREGATION: { markerEnd: 'arrow', style: 'stroke: #333333; stroke-width: 2px;' },
+  COMPOSITION: { markerEnd: 'arrow', style: 'stroke: #333333; stroke-width: 2px;' },
+  DEPENDENCY: { markerEnd: 'arrow', style: 'stroke: #666666; stroke-width: 1.5px; stroke-dasharray: 4 3;' }
 }
 
 // ============================================================================
@@ -390,17 +390,6 @@ export function getNodesWithinDepth(
       }
     }
   }
-  
-  // 상세 디버깅 로그
-  console.log('[getNodesWithinDepth] 깊이 필터링 결과:', {
-    startNodes: startNodeIds,
-    maxDepth,
-    resultCount: visited.size,
-    totalLinks: links.filter(l => isClassRelation(l)).length,
-    adjacencySize: adjacency.size,
-    visitedIds: Array.from(visited).slice(0, 10),
-    message: `깊이 ${maxDepth}로 ${startNodeIds.length}개 시작 노드에서 ${visited.size}개 노드 탐색됨`
-  })
   
   return visited
 }

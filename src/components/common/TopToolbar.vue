@@ -4,7 +4,7 @@
  * 상단 툴바 - 밝은 중성 테마 (msaez.io 스타일)
  */
 
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useSessionStore } from '@/stores/session'
 import { useProjectStore } from '@/stores/project'
 import { storeToRefs } from 'pinia'
@@ -18,7 +18,20 @@ const { sessionId } = storeToRefs(sessionStore)
 const { projectName, isProcessing, currentStep, sourceType, convertTarget } = storeToRefs(projectStore)
 
 const showSettings = ref(false)
-const nodeLimit = ref(parseInt(localStorage.getItem('nodeLimit') || '500'))
+const nodeLimit = ref(500)
+
+// localStorage에서 값 로드 (안전하게, 마운트 후)
+onMounted(() => {
+  try {
+    const savedNodeLimit = localStorage.getItem('nodeLimit')
+    if (savedNodeLimit) {
+      const parsed = parseInt(savedNodeLimit)
+      if (!isNaN(parsed)) nodeLimit.value = parsed
+    }
+  } catch (e) {
+    console.warn('localStorage 접근 실패:', e)
+  }
+})
 
 const sourceOptions: { value: SourceType; label: string; icon: string }[] = [
   { value: 'oracle', label: 'Oracle', icon: '🔶' },

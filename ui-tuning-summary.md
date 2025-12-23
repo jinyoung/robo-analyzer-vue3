@@ -15,7 +15,15 @@
 - **노드/관계 표시 & limit**
   - 하단 요약 텍스트를 영어로 통일: `Displaying X nodes, Y relationships.`.
   - 배경색, 불필요한 라인 제거 후 다른 요소와 좌측 정렬 및 여백만으로 구분.
-  - limit 적용 시에만 패널 내 경고 문구와 그래프 상단 `limit 500개만 표시 중` 배지 노출.
+  - limit 적용 시 "Displaying X nodes, Y relationships." 바로 아래에 영어 경고 메시지 표시:
+    - "More than 500 nodes were found; only 500 are visible due to the display limit." (주황색 텍스트)
+    - 이모지 없이 주황색(`#ea580c`) 텍스트만으로 경고 스타일 적용.
+  - 그래프 상단 limit-notice 제거 (NvlGraph.vue의 왼쪽 상단 배지 삭제).
+  - 노드 패널 스크롤 개선:
+    - 이중 스크롤 구조 제거 (`.stats-wrapper`의 `overflow-y` 제거, `.panel-body`에서만 스크롤).
+    - `.display-summary`의 `position: sticky` 제거하여 스크롤이 끝까지 도달하도록 수정.
+    - `.floating-panel`에 `height: 100%`, `.panel-body`에 `flex: 1`, `min-height: 0` 적용.
+    - 스크롤바 스타일 추가로 표시 여부 명확화.
 
 ### 2. 전환 탭 (`ConvertTab.vue`, `FrameworkSteps.vue`)
 - **파일 탐색기**
@@ -130,13 +138,16 @@
 - **이름 변경**
   - "전환결과" → "전환"으로 탭 이름 변경.
 
-### 10. 노드 리밋 개선
-- **메시지 개선**
-  - "limit @@개만 보여지고 있습니다. 설정창에서 변경할 수 있습니다." 형태로 간결하게 표시.
+### 10. 노드 리밋 개선 (완료)
+- **메시지 개선** (완료)
+  - "More than 500 nodes were found; only 500 are visible due to the display limit." 형태로 영어로 표시.
+  - 주황색 텍스트로 경고 스타일 적용, 이모지 제거.
   - 특정 노드 더블클릭 시 확장 가능, 이미 펼쳐진 노드는 다시 더블클릭 시 축소.
 
-- **노드 패널 표시**
+- **노드 패널 표시** (완료)
   - "Displaying X nodes, Y relationships." 메시지 하단에 limit 경고 배치.
+  - `isLimitApplied` 또는 `totalNodes > displayedNodes` 조건으로 자동 판단하여 표시.
+  - 그래프 상단 limit-notice 제거하여 Overview 패널에만 표시.
 
 ### 11. 설정 모달 확장
 - **추가 설정 항목**

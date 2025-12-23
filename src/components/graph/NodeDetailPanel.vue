@@ -28,6 +28,7 @@ interface Props {
   totalNodes?: number
   totalRelationships?: number
   displayedNodes?: number  // 실제 표시된 노드 수
+  displayedRelationships?: number  // 실제 표시된 관계 수
   hiddenNodes?: number     // limit으로 숨겨진 노드 수
   isProcessing?: boolean
   isLimitApplied?: boolean  // limit 적용 여부
@@ -58,6 +59,7 @@ const props = withDefaults(defineProps<Props>(), {
   totalNodes: 0,
   totalRelationships: 0,
   displayedNodes: 0,
+  displayedRelationships: 0,
   hiddenNodes: 0,
   isProcessing: false,
   isLimitApplied: false,
@@ -238,7 +240,7 @@ function toggleExpand(key: string): void {
         <!-- 요약 -->
         <div class="display-summary">
           <div class="summary-main">
-            <span>Displaying {{ displayedNodes || totalNodes }} nodes, {{ totalRelationships }} relationships.</span>
+            <span>Displaying {{ displayedNodes ?? totalNodes }} nodes, {{ displayedRelationships ?? totalRelationships }} relationships.</span>
           </div>
           <div class="limit-warning" v-if="showLimitWarning">
             <span class="warning-text">

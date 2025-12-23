@@ -28,6 +28,8 @@ import { getNodeColor, getRelationshipColor, getNodeSize, NODE_COLORS } from '@/
 interface Props {
   graphData: GraphData
   selectedNodeId?: string
+  /** 최대 표시 노드 개수 */
+  maxNodes?: number
 }
 
 interface NodeStat {
@@ -45,8 +47,8 @@ const BATCH_SIZE = 20
 /** 배치 간 대기 시간 (ms) */
 const BATCH_INTERVAL = 1000
 
-/** 최대 표시 노드 개수 (성능 최적화) */
-const MAX_DISPLAY_NODES = 500
+/** 기본 최대 표시 노드 개수 */
+const DEFAULT_MAX_NODES = 500
 
 /** NVL 렌더러 옵션 */
 const NVL_OPTIONS = {
@@ -56,18 +58,30 @@ const NVL_OPTIONS = {
   relationshipLabelFontSize: 10,
   relationshipWidth: 2,
   nodeCaptionFontSize: 12,
-  nodeCaptionColor: '#333333'
+  nodeCaptionColor: '#333333',
+  // 노드 클릭시 자동 이동 비활성화
+  panOnClick: false,
+  zoomOnClick: false,
+  // 레이아웃 움직임 최소화
+  layout: 'force-directed',
+  layoutOptions: {
+    // 레이아웃 안정화 설정 - 움직임 최소화
+    iterations: 100,
+    animationDuration: 0,
+    disableAnimation: true
+  }
 } as const
 
 // ============================================================================
 // Props & Emits
 // ============================================================================
 
-const props = defineProps<Props>()
+const props = withDefaults(defineProps<Props>(), {
+  maxNodes: DEFAULT_MAX_NODES
+})
 
 const emit = defineEmits<{
   'node-select': [node: GraphNode | null]
-  'node-double-click': [node: GraphNode]
 }>()
 
 // ============================================================================
@@ -92,6 +106,7 @@ const pendingNodeCount = ref(0)
 const totalNodeCount = ref(0)        // 전체 노드 수
 const hiddenNodeCount = ref(0)       // 숨겨진 노드 수 (limit 초과)
 const isLimitApplied = ref(false)    // limit 적용 여부
+const displayedRelationshipCount = ref(0)  // 표시된 관계 수
 
 // 통계 데이터
 const nodeStats = ref<Map<string, NodeStat>>(new Map())
@@ -336,12 +351,13 @@ function syncGraphData(data: GraphData): { newNodes: NvlNode[]; newRels: NvlRela
   // 전체 노드 수 저장
   totalNodeCount.value = data.nodes.length
   
-  // 노드 limit 적용
-  const limitedNodes = data.nodes.slice(0, MAX_DISPLAY_NODES)
+  // 노드 limit 적용 (props.maxNodes 사용)
+  const maxDisplayNodes = props.maxNodes || DEFAULT_MAX_NODES
+  const limitedNodes = data.nodes.slice(0, maxDisplayNodes)
   const displayedNodeIds = new Set(limitedNodes.map(n => n.id))
   
-  hiddenNodeCount.value = Math.max(0, data.nodes.length - MAX_DISPLAY_NODES)
-  isLimitApplied.value = data.nodes.length > MAX_DISPLAY_NODES
+  hiddenNodeCount.value = Math.max(0, data.nodes.length - maxDisplayNodes)
+  isLimitApplied.value = data.nodes.length > maxDisplayNodes
   
   // 노드 처리 (limit 적용)
   for (const node of limitedNodes) {
@@ -354,35 +370,36 @@ function syncGraphData(data: GraphData): { newNodes: NvlNode[]; newRels: NvlRela
     }
   }
   
-  // 관계 처리 (표시된 노드 간의 관계만)
+  // 관계 처리 (표시된 노드 간의 관계만, 플레이스홀더 노드는 제외)
+  // 표시된 관계만 새로 계산 (기존 relationshipMap과 독립적으로 계산)
+  const displayedRels = new Map<string, NvlRelationship>()
+  
   for (const link of data.links) {
-    // 양쪽 노드가 모두 표시되는 경우에만 관계 추가
-    const sourceDisplayed = displayedNodeIds.has(link.source) || nodeMap.has(link.source)
-    const targetDisplayed = displayedNodeIds.has(link.target) || nodeMap.has(link.target)
+    // 양쪽 노드가 모두 표시된 노드인 경우에만 관계 추가
+    const sourceDisplayed = displayedNodeIds.has(link.source)
+    const targetDisplayed = displayedNodeIds.has(link.target)
     
+    // 둘 다 표시된 노드여야만 관계 추가 (플레이스홀더 노드는 제외)
     if (!sourceDisplayed || !targetDisplayed) continue
     
-    // 소스 노드 확인 (플레이스홀더)
-    if (!nodeMap.has(link.source)) {
-      const placeholder = createPlaceholderNode(link.source)
-      nodeMap.set(link.source, placeholder)
-      newNodes.push(placeholder)
-    }
+    // 관계 변환 및 추가
+    const nvlRel = toNvlRelationship(link)
+    displayedRels.set(link.id, nvlRel)
     
-    // 타겟 노드 확인
-    if (!nodeMap.has(link.target)) {
-      const placeholder = createPlaceholderNode(link.target)
-      nodeMap.set(link.target, placeholder)
-      newNodes.push(placeholder)
-    }
-    
-    // 관계 추가
+    // 새로 추가할 관계인지 확인 (렌더링 큐에 추가하기 위해)
     if (!relationshipMap.has(link.id)) {
-      const nvlRel = toNvlRelationship(link)
-      relationshipMap.set(link.id, nvlRel)
       newRels.push(nvlRel)
     }
   }
+  
+  // relationshipMap을 표시된 관계로 완전히 교체
+  relationshipMap.clear()
+  for (const [relId, rel] of displayedRels.entries()) {
+    relationshipMap.set(relId, rel)
+  }
+  
+  // 표시된 관계 수 업데이트 (표시된 노드 간의 관계만 카운트)
+  displayedRelationshipCount.value = relationshipMap.size
   
   // 통계 업데이트 (변경이 있을 때만)
   if (newNodes.length > 0 || newRels.length > 0) {
@@ -480,13 +497,6 @@ function setupInteractions(): void {
     if (graphNode) emit('node-select', graphNode)
   })
   
-  // 노드 더블클릭
-  click.updateCallback('onNodeDoubleClick', (node: { id: string } | null) => {
-    if (!node?.id) return
-    const graphNode = findOriginalNode(node.id)
-    if (graphNode) emit('node-double-click', graphNode)
-  })
-  
   // 캔버스 클릭 (선택 해제)
   click.updateCallback('onCanvasClick', () => {
     emit('node-select', null)
@@ -566,6 +576,10 @@ function resetGraph(): void {
   loadingProgress.value = 0
   isLoadingBatch.value = false
   pendingNodeCount.value = 0
+  totalNodeCount.value = 0
+  hiddenNodeCount.value = 0
+  isLimitApplied.value = false
+  displayedRelationshipCount.value = 0
   
   if (nvlInstance.value) {
     nvlInstance.value.destroy()
@@ -603,16 +617,36 @@ watch(() => props.graphData, (newData) => {
   }
 }, { deep: true })
 
-// 선택된 노드 하이라이트
-watch(() => props.selectedNodeId, (newId) => {
-  if (!nvlInstance.value || !newId) return
+// maxNodes 변경 감시 - 변경시 그래프 재생성
+watch(() => props.maxNodes, () => {
+  if (props.graphData.nodes.length > 0) {
+    resetGraph()
+    initNvl()
+  }
+})
+
+// 선택된 노드 하이라이트 - 레이아웃 재계산 없이 스타일만 업데이트
+watch(() => props.selectedNodeId, (newId, oldId) => {
+  if (!nvlInstance.value) return
   
-  const nodes = Array.from(nodeMap.values()).map(n => ({
-    ...n,
-    color: n.id === newId ? '#3b82f6' : n.color
-  }))
+  const nodesToUpdate: NvlNode[] = []
   
-  nvlInstance.value.addAndUpdateElementsInGraph(nodes, Array.from(relationshipMap.values()))
+  // 이전 선택 노드 원래 색상으로 복원
+  if (oldId && nodeMap.has(oldId)) {
+    const oldNode = nodeMap.get(oldId)!
+    nodesToUpdate.push({ ...oldNode })
+  }
+  
+  // 새로 선택된 노드 하이라이트
+  if (newId && nodeMap.has(newId)) {
+    const newNode = nodeMap.get(newId)!
+    nodesToUpdate.push({ ...newNode, color: '#3b82f6' })
+  }
+  
+  if (nodesToUpdate.length > 0) {
+    // 노드 스타일만 업데이트 (레이아웃 재계산 안함)
+    nvlInstance.value.addAndUpdateElementsInGraph(nodesToUpdate, [])
+  }
 })
 
 // ============================================================================
@@ -631,15 +665,16 @@ defineExpose({
   pendingNodeCount,
   // 노드 limit 관련
   totalNodeCount,
-  hiddenNodeCount,
-  isLimitApplied
+  hiddenNodeCount: () => hiddenNodeCount.value,
+  isLimitApplied: () => isLimitApplied.value,
+  displayedRelationshipCount: () => displayedRelationshipCount.value
 })
 </script>
 
 <template>
   <div class="nvl-graph" ref="containerRef">
-    <!-- 빈 상태 -->
-    <div v-if="nodeMap.size === 0" class="empty-state">
+    <!-- 빈 상태 (초기화 완료 후 데이터가 없을 때만 표시) -->
+    <div v-if="!isInitializing && !isLoadingBatch && nodeMap.size === 0 && totalNodeCount === 0" class="empty-state">
       <div class="empty-icon">🔗</div>
       <p>그래프 데이터가 없습니다</p>
       <p class="hint">업로드 후 분석을 시작하면 그래프가 표시됩니다</p>
@@ -700,9 +735,9 @@ defineExpose({
 // 로딩 인디케이터
 .loading-indicator {
   position: absolute;
-  bottom: 20px;
+  top: 50%;
   left: 50%;
-  transform: translateX(-50%);
+  transform: translate(-50%, -50%);
   display: flex;
   flex-direction: column;
   align-items: center;

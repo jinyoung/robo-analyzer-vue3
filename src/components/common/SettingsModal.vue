@@ -45,20 +45,23 @@ const { projectName, graphData } = storeToRefs(projectStore)
 // 설정 상태
 // ============================================================================
 
-/** 노드 표시 제한 */
-const nodeLimit = ref(500)
+/** 노드 표시 제한 (임시값) */
+const tempNodeLimit = ref(500)
 
-/** UML 다이어그램 기본 깊이 */
-const umlDepth = ref(3)
+/** UML 다이어그램 기본 깊이 (임시값) */
+const tempUmlDepth = ref(3)
 
 /** API Key (마스킹) */
-const apiKey = ref('')
+const tempApiKey = ref('')
 const showApiKey = ref(false)
+
+/** 변경 여부 */
+const hasChanges = ref(false)
 
 // store의 apiKey와 동기화
 watch(storeApiKey, (value) => {
   if (value) {
-    apiKey.value = value
+    tempApiKey.value = value
   }
 }, { immediate: true })
 
@@ -77,9 +80,9 @@ const currentRelCount = computed(() => graphData.value?.links.length || 0)
 
 /** API Key 마스킹 */
 const maskedApiKey = computed(() => {
-  if (!apiKey.value) return '설정되지 않음'
-  if (showApiKey.value) return apiKey.value
-  return apiKey.value.slice(0, 8) + '••••••••••••••••'
+  if (!tempApiKey.value) return '설정되지 않음'
+  if (showApiKey.value) return tempApiKey.value
+  return tempApiKey.value.slice(0, 8) + '••••••••••••••••'
 })
 
 // ============================================================================
@@ -111,29 +114,38 @@ function handleDeleteAll() {
 }
 
 // ============================================================================
+// 저장 및 적용
+// ============================================================================
+
+/** 저장 및 적용 */
+function handleSaveAndApply() {
+  // localStorage에 저장
+  localStorage.setItem('nodeLimit', String(tempNodeLimit.value))
+  localStorage.setItem('umlDepth', String(tempUmlDepth.value))
+  
+  // 이벤트 발생
+  emit('update:nodeLimit', tempNodeLimit.value)
+  emit('update:umlDepth', tempUmlDepth.value)
+  window.dispatchEvent(new CustomEvent('nodeLimitChange', { detail: tempNodeLimit.value }))
+  window.dispatchEvent(new CustomEvent('umlDepthChange', { detail: tempUmlDepth.value }))
+  
+  // API Key 저장
+  if (tempApiKey.value) {
+    sessionStore.setApiKey(tempApiKey.value)
+  }
+  
+  hasChanges.value = false
+  emit('close')
+}
+
+// ============================================================================
 // 초기화
 // ============================================================================
 
-// 설정값 자동 저장
-watch(nodeLimit, (value) => {
+// 값 변경 감지 (저장 버튼 활성화용)
+watch([tempNodeLimit, tempUmlDepth, tempApiKey], () => {
   if (props.isOpen) {
-    localStorage.setItem('nodeLimit', String(value))
-    emit('update:nodeLimit', value)
-    window.dispatchEvent(new CustomEvent('nodeLimitChange', { detail: value }))
-  }
-})
-
-watch(umlDepth, (value) => {
-  if (props.isOpen) {
-    localStorage.setItem('umlDepth', String(value))
-    emit('update:umlDepth', value)
-    window.dispatchEvent(new CustomEvent('umlDepthChange', { detail: value }))
-  }
-})
-
-watch(apiKey, (value) => {
-  if (props.isOpen && value) {
-    sessionStore.setApiKey(value)
+    hasChanges.value = true
   }
 })
 
@@ -141,18 +153,20 @@ watch(() => props.isOpen, (isOpen) => {
   if (isOpen) {
     // 모달 열릴 때 현재 설정값 로드
     activeSection.value = 'display'
+    hasChanges.value = false
+    
     // localStorage에서 현재 값 로드
     const savedNodeLimit = localStorage.getItem('nodeLimit')
     if (savedNodeLimit) {
-      nodeLimit.value = parseInt(savedNodeLimit)
+      tempNodeLimit.value = parseInt(savedNodeLimit)
     }
     const savedUmlDepth = localStorage.getItem('umlDepth')
     if (savedUmlDepth) {
-      umlDepth.value = parseInt(savedUmlDepth)
+      tempUmlDepth.value = parseInt(savedUmlDepth)
     }
     // API Key 로드
     if (storeApiKey.value) {
-      apiKey.value = storeApiKey.value
+      tempApiKey.value = storeApiKey.value
     }
   }
 })
@@ -206,8 +220,9 @@ watch(() => props.isOpen, (isOpen) => {
               </button>
             </nav>
 
-            <!-- 컨텐츠 -->
-            <div class="settings-content">
+            <!-- 컨텐츠 영역 (스크롤 가능) -->
+            <div class="settings-content-wrapper">
+              <div class="settings-content">
               <!-- 표시 설정 -->
               <div v-if="activeSection === 'display'" class="settings-section">
                 <h3>표시 설정</h3>
@@ -223,7 +238,7 @@ watch(() => props.isOpen, (isOpen) => {
                   <div class="setting-control">
                     <input 
                       type="number" 
-                      v-model.number="nodeLimit" 
+                      v-model.number="tempNodeLimit" 
                       min="100" 
                       max="2000" 
                       step="100"
@@ -243,12 +258,12 @@ watch(() => props.isOpen, (isOpen) => {
                   <div class="setting-control">
                     <input 
                       type="range" 
-                      v-model.number="umlDepth" 
+                      v-model.number="tempUmlDepth" 
                       min="1" 
                       max="10" 
                       step="1"
                     />
-                    <span class="value">{{ umlDepth }}</span>
+                    <span class="value">{{ tempUmlDepth }}</span>
                   </div>
                 </div>
               </div>
@@ -269,7 +284,7 @@ watch(() => props.isOpen, (isOpen) => {
                     <div class="input-wrapper">
                       <input 
                         :type="showApiKey ? 'text' : 'password'"
-                        v-model="apiKey" 
+                        v-model="tempApiKey" 
                         placeholder="sk-..."
                       />
                       <button 
@@ -344,6 +359,14 @@ watch(() => props.isOpen, (isOpen) => {
                   </div>
                 </div>
               </div>
+              </div>
+              
+              <!-- 저장 버튼 (하단) -->
+              <div class="modal-footer">
+                <button class="save-btn" @click="handleSaveAndApply">
+                  저장
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -405,6 +428,7 @@ watch(() => props.isOpen, (isOpen) => {
       font-size: 22px;
     }
   }
+
 
   .close-btn {
     width: 32px;
@@ -488,6 +512,13 @@ watch(() => props.isOpen, (isOpen) => {
 // ============================================================================
 // 컨텐츠 영역
 // ============================================================================
+
+.settings-content-wrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
 
 .settings-content {
   flex: 1;
@@ -685,19 +716,35 @@ watch(() => props.isOpen, (isOpen) => {
 // 버튼
 // ============================================================================
 
+// ============================================================================
+// 모달 푸터
+// ============================================================================
+
+.modal-footer {
+  padding: 16px 24px;
+  border-top: 1px solid #e2e8f0;
+  background: #ffffff;
+  display: flex;
+  justify-content: flex-end;
+}
+
 .save-btn {
-  padding: 8px 16px;
-  background: #64748b;
+  padding: 10px 24px;
+  background: #3b82f6;
   color: white;
   border: none;
   border-radius: 8px;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   cursor: pointer;
   transition: all 0.15s;
 
   &:hover {
-    background: #475569;
+    background: #2563eb;
+  }
+
+  &:active {
+    transform: scale(0.98);
   }
 }
 
