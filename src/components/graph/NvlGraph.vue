@@ -19,7 +19,8 @@ import {
   ZoomInteraction 
 } from '@neo4j-nvl/interaction-handlers'
 import type { GraphData, GraphNode, GraphLink, NvlNode, NvlRelationship } from '@/types'
-import { getNodeColor, getRelationshipColor, getNodeSize, NODE_COLORS } from '@/config/graphStyles'
+import type { PartialNode, PartialRelationship } from '@neo4j-nvl/base'
+import { getNodeColor, getRelationshipColor, getNodeSize } from '@/config/graphStyles'
 
 // ============================================================================
 // 타입 정의
@@ -149,14 +150,78 @@ let isProcessingQueue = false
 /** 업데이트 대기 플래그 (디바운싱) */
 let updatePending = false
 
+/** 확장 가능한 노드 ID 집합 (자식이 존재하는 노드) */
+const expandableNodeIds = new Set<string>()
+
+/** 현재 확장된 노드 ID (더블클릭으로 확장된 노드) */
+const expandedNodeId = ref<string | null>(null)
+
+/** 화면에서 숨겨진 노드 ID 집합 (삭제된 노드) */
+const hiddenNodeIds = new Set<string>()
+
+// 컨텍스트 메뉴 상태
+const contextMenuVisible = ref(false)
+const contextMenuPosition = ref({ x: 0, y: 0 })
+const contextMenuNodeId = ref<string | null>(null)
+// 컨텍스트 메뉴 DOM 참조
+const contextMenuRef = ref<HTMLElement | null>(null)
+
 // ============================================================================
 // 데이터 변환 함수
 // ============================================================================
 
 /**
+ * 노드가 확장 가능한지 확인 (추가할 수 있는 노드가 실제로 존재하는지)
+ */
+function isExpandableNode(nodeId: string): boolean {
+  // 확장 가능한 노드 집합에 없으면 false
+  if (!expandableNodeIds.has(nodeId)) return false
+  
+  // 연결된 노드들 중 실제로 추가할 수 있는 노드가 있는지 확인
+  for (const link of props.graphData.links) {
+    let connectedNodeId: string | null = null
+    
+    if (link.source === nodeId) {
+      connectedNodeId = link.target
+    } else if (link.target === nodeId) {
+      connectedNodeId = link.source
+    }
+    
+    if (!connectedNodeId) continue
+    
+    // 이미 표시된 노드는 스킵
+    if (nodeMap.has(connectedNodeId) && !hiddenNodeIds.has(connectedNodeId)) {
+      continue
+    }
+    
+    // 숨겨진 노드이거나 nodeMap에 없는 노드 중에서
+    // graphData에 실제로 존재하는 노드가 있으면 확장 가능
+    const existsInGraphData = props.graphData.nodes.some(n => n.id === connectedNodeId)
+    if (existsInGraphData) {
+      return true
+    }
+  }
+  
+  return false
+}
+
+/**
+ * 확장 가능한 노드 집합 업데이트
+ */
+function updateExpandableNodes(): void {
+  expandableNodeIds.clear()
+  
+  for (const link of props.graphData.links) {
+    if (link.type === 'PARENT_OF') {
+      expandableNodeIds.add(link.source)
+    }
+  }
+}
+
+/**
  * GraphNode를 NVL 형식으로 변환
  */
-function toNvlNode(node: GraphNode, isSelected: boolean = false): NvlNode {
+function toNvlNode(node: GraphNode, isSelected: boolean = false, isExpandable: boolean = false): NvlNode {
   const labels = node.labels || []
   const name = (node.properties?.name as string) 
     || labels[0] 
@@ -168,7 +233,11 @@ function toNvlNode(node: GraphNode, isSelected: boolean = false): NvlNode {
     color: getNodeColor(labels),
     size: getNodeSize(labels),
     selected: isSelected,
-    properties: { ...node.properties, labels }
+    properties: { 
+      ...node.properties, 
+      labels,
+      isExpandable: isExpandable
+    }
   }
 }
 
@@ -210,7 +279,7 @@ function updateNodeStats(): void {
     } else {
       stats.set(primaryLabel, { 
         count: 1, 
-        color: NODE_COLORS[primaryLabel] || NODE_COLORS[primaryLabel.toUpperCase()] || NODE_COLORS.DEFAULT 
+        color: getNodeColor(labels)
       })
     }
   }
@@ -341,26 +410,36 @@ function syncGraphData(data: GraphData): { newNodes: NvlNode[]; newRels: NvlRela
   const newNodes: NvlNode[] = []
   const newRels: NvlRelationship[] = []
   
+  // 확장 가능한 노드 업데이트
+  updateExpandableNodes()
+  
   // 전체 노드 수 저장
   totalNodeCount.value = data.nodes.length
   
-  // 노드 limit 적용 (props.maxNodes 사용)
-  const maxDisplayNodes = props.maxNodes || DEFAULT_MAX_NODES
+  // 확장된 노드가 있으면 limit 무시
+  const shouldIgnoreLimit = expandedNodeId.value !== null
+  
+  // 노드 limit 적용 (props.maxNodes 사용, 확장 모드에서는 무시)
+  const maxDisplayNodes = shouldIgnoreLimit ? data.nodes.length : (props.maxNodes || DEFAULT_MAX_NODES)
   const limitedNodes = data.nodes.slice(0, maxDisplayNodes)
-  const displayedNodeIds = new Set(limitedNodes.map(n => n.id))
   
-  hiddenNodeCount.value = Math.max(0, data.nodes.length - maxDisplayNodes)
-  isLimitApplied.value = data.nodes.length > maxDisplayNodes
+  // 숨겨진 노드 제외
+  const visibleNodes = limitedNodes.filter(n => !hiddenNodeIds.has(n.id))
+  const displayedNodeIds = new Set(visibleNodes.map(n => n.id))
   
-  for (const node of limitedNodes) {
+  hiddenNodeCount.value = shouldIgnoreLimit ? 0 : Math.max(0, data.nodes.length - maxDisplayNodes)
+  isLimitApplied.value = shouldIgnoreLimit ? false : (data.nodes.length > maxDisplayNodes)
+  
+  for (const node of visibleNodes) {
     const isSelected = props.selectedNodeId === node.id
+    const isExpandable = isExpandableNode(node.id)
     const existing = nodeMap.get(node.id)
     
     if (existing && existing.selected === isSelected) {
       continue
     }
     
-    const nvlNode = toNvlNode(node, isSelected)
+    const nvlNode = toNvlNode(node, isSelected, isExpandable)
     nodeMap.set(node.id, nvlNode)
     newNodes.push(nvlNode)
   }
@@ -368,6 +447,11 @@ function syncGraphData(data: GraphData): { newNodes: NvlNode[]; newRels: NvlRela
   const displayedRels = new Map<string, NvlRelationship>()
   
   for (const link of data.links) {
+    // 숨겨진 노드와 연결된 관계는 제외
+    if (hiddenNodeIds.has(link.source) || hiddenNodeIds.has(link.target)) {
+      continue
+    }
+    
     if (!displayedNodeIds.has(link.source) || !displayedNodeIds.has(link.target)) {
       continue
     }
@@ -472,20 +556,130 @@ async function initNvl(): Promise<void> {
 }
 
 /**
+ * 노드 확장 (1단계 자식만 표시)
+ * 확장된 노드와 직접 연결된 노드/관계를 그래프에 추가
+ */
+function expandNode(nodeId: string): void {
+  if (!nvlInstance.value) return
+  
+  expandedNodeId.value = nodeId
+  
+  // 확장된 노드와 직접 연결된 노드 찾기
+  const connectedNodeIds = new Set<string>()
+  for (const link of props.graphData.links) {
+    if (link.source === nodeId) {
+      connectedNodeIds.add(link.target)
+    } else if (link.target === nodeId) {
+      connectedNodeIds.add(link.source)
+    }
+  }
+  
+  // 추가할 노드들 찾기 (아직 표시되지 않은 노드들만)
+  const nodesToAdd: NvlNode[] = []
+  const relsToAdd: NvlRelationship[] = []
+  
+  // 이미 표시된 노드 수 (디버깅용)
+  let alreadyDisplayedCount = 0
+  
+  for (const connectedNodeId of connectedNodeIds) {
+    // 이미 표시된 노드는 스킵
+    if (nodeMap.has(connectedNodeId) && !hiddenNodeIds.has(connectedNodeId)) {
+      alreadyDisplayedCount++
+      continue
+    }
+    
+    const originalNode = props.graphData.nodes.find(n => n.id === connectedNodeId)
+    if (!originalNode) continue
+    
+    hiddenNodeIds.delete(connectedNodeId)
+    
+    const nvlNode = toNvlNode(originalNode, props.selectedNodeId === connectedNodeId, isExpandableNode(connectedNodeId))
+    nodeMap.set(connectedNodeId, nvlNode)
+    nodesToAdd.push(nvlNode)
+  }
+  
+  // 확장된 노드와 직계 노드들 간의 관계 추가
+  for (const link of props.graphData.links) {
+    const sourceConnected = connectedNodeIds.has(link.source) || link.source === nodeId
+    const targetConnected = connectedNodeIds.has(link.target) || link.target === nodeId
+    
+    if (sourceConnected && targetConnected && !relationshipMap.has(link.id)) {
+      const nvlRel = toNvlRelationship(link, props.selectedRelationshipId === link.id)
+      relationshipMap.set(link.id, nvlRel)
+      relsToAdd.push(nvlRel)
+    }
+  }
+  
+  // 디버깅 로그
+  console.log(`[expandNode] 노드 ${nodeId} 확장:`, {
+    연결된노드수: connectedNodeIds.size,
+    이미표시됨: alreadyDisplayedCount,
+    새로추가: nodesToAdd.length,
+    새관계: relsToAdd.length
+  })
+  
+  if (nodesToAdd.length === 0 && relsToAdd.length === 0) {
+    console.log(`[expandNode] 추가할 노드/관계가 없음 - 모든 연결된 노드가 이미 표시됨`)
+  }
+  
+  // NVL 공식 API로 직접 추가
+  if (nodesToAdd.length > 0 || relsToAdd.length > 0) {
+    nvlInstance.value.addAndUpdateElementsInGraph(nodesToAdd, relsToAdd)
+    nodesToAdd.forEach(node => renderedNodeIds.add(node.id))
+    relsToAdd.forEach(rel => renderedRelIds.add(rel.id))
+  }
+  
+  updateNodeStats()
+  updateRelationshipStats()
+}
+
+
+/**
  * 인터랙션 핸들러 설정
  */
 function setupInteractions(): void {
-  if (!nvlInstance.value) return
+  if (!nvlInstance.value || !containerRef.value) return
   
   const nvl = nvlInstance.value
   const click = new ClickInteraction(nvl)
   
+  let lastClickNodeId: string | null = null
+  let lastClickTime = 0
+  
   click.updateCallback('onNodeClick', (node: { id: string } | null) => {
     if (!node?.id) return
-    const graphNode = findOriginalNode(node.id)
-    if (graphNode) {
-      emit('node-select', graphNode)
+    
+    const now = Date.now()
+    const isDoubleClick = lastClickNodeId === node.id && (now - lastClickTime) < 300
+    
+    if (isDoubleClick) {
+      // 더블클릭: 노드 확장
+      if (isExpandableNode(node.id)) {
+        expandNode(node.id)
+      }
+      lastClickNodeId = null
+      lastClickTime = 0
+    } else {
+      // 단일 클릭: 노드 선택
+      lastClickNodeId = node.id
+      lastClickTime = now
+      
+      const graphNode = findOriginalNode(node.id)
+      if (graphNode) {
+        emit('node-select', graphNode)
+      }
     }
+  })
+  
+  // 오른쪽 클릭 콜백 등록
+  click.updateCallback('onNodeRightClick', (node: { id: string } | null, _hits: any, evt: MouseEvent) => {
+    if (!node?.id) return
+    evt.preventDefault()
+    
+    // 컨텍스트 메뉴 표시
+    contextMenuNodeId.value = node.id
+    contextMenuPosition.value = { x: evt.clientX, y: evt.clientY }
+    contextMenuVisible.value = true
   })
   
   click.updateCallback('onRelationshipClick', (relationship: { id: string } | null) => {
@@ -499,11 +693,120 @@ function setupInteractions(): void {
   click.updateCallback('onCanvasClick', () => {
     emit('node-select', null)
     emit('relationship-select', null)
+    closeContextMenu()
   })
+  
+  // 기본 컨텍스트 메뉴 방지
+  contextMenuHandler = (e: MouseEvent) => {
+    if (!contextMenuNodeId.value) {
+      e.preventDefault()
+    }
+  }
+  
+  // 외부 클릭 시 메뉴 닫기 (bubble phase 사용)
+  documentClickHandler = (e: MouseEvent) => {
+    if (!contextMenuVisible.value) return
+    
+    const contextMenuElement = contextMenuRef.value
+    if (contextMenuElement && e.target instanceof Node && contextMenuElement.contains(e.target)) {
+      return // 메뉴 내부 클릭은 무시
+    }
+    
+    closeContextMenu()
+  }
+  
+  containerRef.value.addEventListener('contextmenu', contextMenuHandler)
+  document.addEventListener('click', documentClickHandler as EventListener)
   
   new DragNodeInteraction(nvl)
   new PanInteraction(nvl)
   new ZoomInteraction(nvl)
+}
+
+/**
+ * 컨텍스트 메뉴 닫기
+ */
+function closeContextMenu(): void {
+  contextMenuVisible.value = false
+  contextMenuNodeId.value = null
+}
+
+// 삭제 처리 중 플래그 (중복 실행 방지)
+let isDeleting = false
+
+/**
+ * 노드 삭제 처리 (화면상에서만)
+ */
+async function handleDeleteNode(event?: Event): Promise<void> {
+  if (isDeleting) return
+  
+  if (event) {
+    event.stopPropagation()
+    event.preventDefault()
+  }
+  
+  const targetNodeId = contextMenuNodeId.value
+  if (!targetNodeId || !nvlInstance.value) return
+  
+  isDeleting = true
+  
+  // 숨겨진 노드 집합에 추가
+  hiddenNodeIds.add(targetNodeId)
+  
+  // 해당 노드와 연결된 모든 관계 찾기
+  const relatedRelIds: string[] = []
+  for (const [relId, rel] of relationshipMap.entries()) {
+    if (rel.from === targetNodeId || rel.to === targetNodeId) {
+      relatedRelIds.push(relId)
+    }
+  }
+  
+  // 관계 맵에서 제거
+  for (const relId of relatedRelIds) {
+    relationshipMap.delete(relId)
+    renderedRelIds.delete(relId)
+  }
+  
+  // 노드 맵에서 제거
+  nodeMap.delete(targetNodeId)
+  renderedNodeIds.delete(targetNodeId)
+  
+  // NVL 공식 API로 노드 제거 (인접 관계도 자동 제거됨)
+  nvlInstance.value.removeNodesWithIds([targetNodeId])
+  
+  // 선택된 노드가 삭제된 경우 선택 해제
+  if (props.selectedNodeId === targetNodeId) {
+    emit('node-select', null)
+  }
+  
+  // 통계 업데이트
+  updateNodeStats()
+  updateRelationshipStats()
+  
+  isDeleting = false
+  closeContextMenu()
+}
+
+/**
+ * 노드 확장 처리 (컨텍스트 메뉴에서)
+ */
+function handleExpandNode(event?: Event): void {
+  if (event) {
+    event.stopPropagation()
+    event.preventDefault()
+  }
+  
+  const nodeId = contextMenuNodeId.value
+  if (!nodeId) {
+    closeContextMenu()
+    return
+  }
+  
+  if (isExpandableNode(nodeId)) {
+    expandNode(nodeId)
+  }
+  
+  closeContextMenu()
 }
 
 /**
@@ -526,11 +829,12 @@ function findOriginalRelationship(id: string): GraphLink | undefined {
 
 /**
  * 노드 스타일만 업데이트 (사용자 설정 변경 시)
+ * PartialNode를 사용하여 위치 없이 속성만 업데이트하여 레이아웃 재계산 방지
  */
 function updateNodeStyles(): void {
   if (!nvlInstance.value) return
   
-  const nodesToUpdate: NvlNode[] = []
+  const nodesToUpdate: PartialNode[] = []
   
   for (const [nodeId, node] of nodeMap.entries()) {
     const labels = (node.properties?.labels as string[]) || []
@@ -538,18 +842,21 @@ function updateNodeStyles(): void {
     const newSize = getNodeSize(labels)
     
     if (node.color !== newColor || node.size !== newSize) {
-      const updatedNode = {
-        ...node,
+      // PartialNode를 사용하여 위치 없이 속성만 업데이트 (레이아웃 재계산 방지)
+      const updatedNode: PartialNode = {
+        id: nodeId,
         color: newColor,
         size: newSize
       }
       nodesToUpdate.push(updatedNode)
-      nodeMap.set(nodeId, updatedNode)
+      // 내부 맵도 업데이트
+      nodeMap.set(nodeId, { ...node, color: newColor, size: newSize })
     }
   }
   
   if (nodesToUpdate.length > 0) {
-    nvlInstance.value.addAndUpdateElementsInGraph(nodesToUpdate, [])
+    // PartialNode를 사용하여 레이아웃 재계산 없이 속성만 업데이트
+    nvlInstance.value.updateElementsInGraph(nodesToUpdate, [])
     updateNodeStats()
   }
 }
@@ -607,6 +914,8 @@ function resetGraph(): void {
   
   nodeMap.clear()
   relationshipMap.clear()
+  expandedNodeId.value = null
+  hiddenNodeIds.clear()
   
   loadingProgress.value = 0
   isLoadingBatch.value = false
@@ -620,6 +929,8 @@ function resetGraph(): void {
     nvlInstance.value.destroy()
     nvlInstance.value = null
   }
+  
+  closeContextMenu()
 }
 
 // ============================================================================
@@ -632,7 +943,17 @@ onMounted(() => {
   }
 })
 
+// 이벤트 핸들러 참조 저장 (cleanup용)
+let contextMenuHandler: ((e: MouseEvent) => void) | null = null
+let documentClickHandler: ((e: MouseEvent) => void) | null = null
+
 onUnmounted(() => {
+  if (containerRef.value && contextMenuHandler) {
+    containerRef.value.removeEventListener('contextmenu', contextMenuHandler)
+  }
+  if (documentClickHandler) {
+    document.removeEventListener('click', documentClickHandler)
+  }
   resetGraph()
 })
 
@@ -648,6 +969,8 @@ watch(() => props.graphData, (newData) => {
   }
   
   if (newData.nodes.length > 0) {
+    // 확장 가능한 노드 업데이트
+    updateExpandableNodes()
     updateGraph()
   }
 }, { deep: true })
@@ -662,47 +985,52 @@ watch(() => props.maxNodes, () => {
 watch([() => props.selectedNodeId, () => props.selectedRelationshipId], ([newNodeId, newRelId], [oldNodeId, oldRelId]) => {
   if (!nvlInstance.value || (newNodeId === oldNodeId && newRelId === oldRelId)) return
   
-  const nodesToUpdate: NvlNode[] = []
-  const relsToUpdate: NvlRelationship[] = []
+  const nodesToUpdate: PartialNode[] = []
+  const relsToUpdate: PartialRelationship[] = []
   
   if (oldNodeId) {
+    // PartialNode를 사용하여 선택 상태만 업데이트 (레이아웃 재계산 방지)
+    nodesToUpdate.push({ id: oldNodeId, selected: false })
     const graphNode = props.graphData.nodes.find(n => n.id === oldNodeId)
     if (graphNode) {
       const restoredNode = toNvlNode(graphNode, false)
-      nodesToUpdate.push(restoredNode)
       nodeMap.set(oldNodeId, restoredNode)
     }
   }
   
   if (newNodeId) {
+    // PartialNode를 사용하여 선택 상태만 업데이트 (레이아웃 재계산 방지)
+    nodesToUpdate.push({ id: newNodeId, selected: true })
     const graphNode = props.graphData.nodes.find(n => n.id === newNodeId)
     if (graphNode) {
       const highlightedNode = toNvlNode(graphNode, true)
-      nodesToUpdate.push(highlightedNode)
       nodeMap.set(newNodeId, highlightedNode)
     }
   }
   
   if (oldRelId) {
+    // PartialRelationship을 사용하여 선택 상태만 업데이트 (레이아웃 재계산 방지)
+    relsToUpdate.push({ id: oldRelId, selected: false })
     const graphLink = props.graphData.links.find(l => l.id === oldRelId)
     if (graphLink) {
       const restoredRel = toNvlRelationship(graphLink, false)
-      relsToUpdate.push(restoredRel)
       relationshipMap.set(oldRelId, restoredRel)
     }
   }
   
   if (newRelId) {
+    // PartialRelationship을 사용하여 선택 상태만 업데이트 (레이아웃 재계산 방지)
+    relsToUpdate.push({ id: newRelId, selected: true })
     const graphLink = props.graphData.links.find(l => l.id === newRelId)
     if (graphLink) {
       const highlightedRel = toNvlRelationship(graphLink, true)
-      relsToUpdate.push(highlightedRel)
       relationshipMap.set(newRelId, highlightedRel)
     }
   }
   
   if (nodesToUpdate.length > 0 || relsToUpdate.length > 0) {
-    nvlInstance.value?.updateElementsInGraph(nodesToUpdate, relsToUpdate)
+    // PartialNode/PartialRelationship을 사용하여 레이아웃 재계산 없이 속성만 업데이트
+    nvlInstance.value.updateElementsInGraph(nodesToUpdate, relsToUpdate)
   }
 }, { immediate: false })
 
@@ -714,6 +1042,7 @@ defineExpose({
   resetGraph,
   updateGraph,
   updateNodeStyles,
+  expandNodeChildren: expandNode,
   nodeStats,
   relationshipStats,
   nodeCount: () => nodeMap.size,
@@ -721,7 +1050,6 @@ defineExpose({
   loadingProgress,
   isLoadingBatch,
   pendingNodeCount,
-  // 노드 limit 관련
   totalNodeCount,
   hiddenNodeCount: () => hiddenNodeCount.value,
   isLimitApplied: () => isLimitApplied.value,
@@ -748,6 +1076,38 @@ defineExpose({
           노드 렌더링 중... {{ loadingProgress }}%
           <span v-if="pendingNodeCount > 0">(대기: {{ pendingNodeCount }}개)</span>
         </span>
+      </div>
+      </Transition>
+    
+    <!-- 컨텍스트 메뉴 -->
+    <Transition name="fade">
+      <div
+        v-if="contextMenuVisible && contextMenuNodeId"
+        ref="contextMenuRef"
+        class="context-menu"
+        :style="{
+          left: `${contextMenuPosition.x}px`,
+          top: `${contextMenuPosition.y}px`
+        }"
+        @click.stop.prevent
+        @mousedown.stop.prevent
+      >
+        <button
+          v-if="isExpandableNode(contextMenuNodeId)"
+          class="context-menu-item"
+          @mousedown.stop.prevent
+          @click.stop.prevent="handleExpandNode($event)"
+        >
+          <span class="icon">⤢</span>
+          <span>확장</span>
+        </button>
+        <button
+          class="context-menu-item danger"
+          @mousedown.stop.prevent="handleDeleteNode($event)"
+        >
+          <span class="icon">🗑</span>
+          <span>노드 삭제</span>
+        </button>
       </div>
     </Transition>
     
@@ -849,5 +1209,54 @@ defineExpose({
 .slide-up-leave-to {
   opacity: 0;
   transform: translateX(-50%) translateY(-20px);
+}
+
+// 컨텍스트 메뉴
+.context-menu {
+  position: fixed;
+  z-index: 1000;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  padding: 4px;
+  min-width: 160px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: none;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 6px;
+  font-size: 14px;
+  color: #333;
+  transition: background-color 0.2s;
+  
+  &:hover {
+    background: #f3f4f6;
+  }
+  
+  &.danger {
+    color: #dc2626;
+    
+    &:hover {
+      background: #fee2e2;
+    }
+  }
+  
+  .icon {
+    font-size: 16px;
+    width: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
 }
 </style>

@@ -11,8 +11,8 @@ import NvlGraph from './NvlGraph.vue'
 import NodeDetailPanel from './NodeDetailPanel.vue'
 import NodeStylePanel from './NodeStylePanel.vue'
 import VueFlowClassDiagram from './VueFlowClassDiagram.vue'
-import { getClassName, getDirectory } from '@/utils/classDiagram'
-import type { GraphNode } from '@/types'
+import { getClassName, getDirectory, CLASS_LABELS } from '@/utils/classDiagram'
+import type { GraphNode, GraphLink } from '@/types'
 import { useResize } from '@/composables/useResize'
 
 const projectStore = useProjectStore()
@@ -25,7 +25,6 @@ const {
 } = storeToRefs(projectStore)
 
 const MAX_SEARCH_RESULTS = 8
-const CLASS_LABELS = ['Class', 'CLASS', 'Interface', 'INTERFACE']
 
 const activeView = ref<'graph' | 'uml'>('graph')
 const showNodePanel = ref(false)
@@ -174,7 +173,14 @@ function handleStylePanelClose(): void {
 }
 
 function handleSearchSelect(node: GraphNode): void {
+  // 관계와 타입 선택을 먼저 초기화 (명시적으로)
+  selectedRelationship.value = null
+  selectedNodeType.value = null
+  stylePanelTop.value = 0
+  
+  // 노드 선택
   selectedNode.value = node
+  showNodePanel.value = true
   
   const directory = getDirectory(node)
   const className = getClassName(node)
@@ -194,12 +200,13 @@ function handleSearchSelect(node: GraphNode): void {
   showSearch.value = false
 }
 
-function handleVueFlowClassClick(className: string, directory: string): void {
-  const node = graphData.value?.nodes.find(n => {
-    return getClassName(n) === className && getDirectory(n) === directory
-  })
+function handleVueFlowClassClick(nodeId: string): void {
+  // 클릭한 노드의 ID로 직접 찾기 (우회 없이)
+  const node = graphData.value?.nodes.find(n => n.id === nodeId)
   if (node) {
     selectedNode.value = node
+    selectedRelationship.value = null  // 관계 선택 초기화
+    selectedNodeType.value = null
     showNodePanel.value = true
   }
 }
@@ -227,6 +234,21 @@ function handleStyleUpdated(): void {
   nvlGraphRef.value?.updateNodeStyles()
 }
 
+function handleNodeDelete(nodeId: string): void {
+  // Store의 deleteNodeAndRelationships 메서드 사용
+  projectStore.deleteNodeAndRelationships(nodeId)
+  
+  // 선택된 노드가 삭제된 경우 선택 해제
+  if (selectedNode.value?.id === nodeId) {
+    selectedNode.value = null
+  }
+}
+
+function handleNodeExpand(nodeId: string): void {
+  if (!nvlGraphRef.value) return
+  nvlGraphRef.value.expandNodeChildren(nodeId)
+}
+
 watch(hasGraph, (has, prev) => {
   if (has && !prev) showNodePanel.value = true
 })
@@ -247,6 +269,8 @@ watch(hasGraph, (has, prev) => {
             :maxNodes="nodeLimit"
             @node-select="handleNodeSelect"
             @relationship-select="handleRelationshipSelect"
+            @node-delete="handleNodeDelete"
+            @node-expand="handleNodeExpand"
           />
           
         </template>
@@ -267,6 +291,7 @@ watch(hasGraph, (has, prev) => {
           :depth="umlDepth"
           @class-click="handleVueFlowClassClick"
           @class-expand="handleVueFlowClassExpand"
+          @relationship-select="handleRelationshipSelect"
         />
       </div>
       

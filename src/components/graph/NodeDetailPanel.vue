@@ -10,6 +10,7 @@
 
 import { computed, ref } from 'vue'
 import type { GraphNode, GraphLink } from '@/types'
+import { getNodeColor } from '@/config/graphStyles'
 
 // ============================================================================
 // 타입 정의
@@ -85,6 +86,28 @@ const expandedKeys = ref<Set<string>>(new Set())
 // ============================================================================
 
 
+/** 노드의 모든 라벨 반환 */
+const nodeClassLabels = computed(() => {
+  if (!props.node?.labels) return []
+  return props.node.labels
+})
+
+/** 노드의 색상 계산 (라벨 기반) */
+const nodeColor = computed(() => {
+  if (!props.node?.labels) return '#3b82f6'
+  return getNodeColor(props.node.labels)
+})
+
+/** 각 라벨별 색상 맵 */
+const labelColors = computed(() => {
+  if (!props.node?.labels) return new Map<string, string>()
+  const colorMap = new Map<string, string>()
+  for (const label of props.node.labels) {
+    colorMap.set(label, getNodeColor([label]))
+  }
+  return colorMap
+})
+
 /** 속성 목록 (노드용) */
 const nodeProperties = computed<PropertyItem[]>(() => {
   if (!props.node?.properties) return []
@@ -100,6 +123,8 @@ const nodeProperties = computed<PropertyItem[]>(() => {
 
 /** 속성 목록 (관계용) */
 const relationshipProperties = computed<PropertyItem[]>(() => {
+  // 노드가 있으면 관계 속성은 절대 표시하지 않음
+  if (props.node) return []
   if (!props.relationship) return []
   
   const propsList: PropertyItem[] = [{
@@ -121,8 +146,9 @@ const relationshipProperties = computed<PropertyItem[]>(() => {
   return propsList
 })
 
-/** 표시할 속성 목록 (노드 또는 관계) */
+/** 표시할 속성 목록 (노드 우선, 없으면 관계) */
 const properties = computed(() => {
+  // 노드가 있으면 항상 노드 속성 표시
   return props.node ? nodeProperties.value : relationshipProperties.value
 })
 
@@ -212,15 +238,61 @@ function handleNodeTypeClick(event: MouseEvent, nodeType: string): void {
 
 <template>
   <div class="panel-content">
-    <!-- ========== 노드 또는 관계 선택 시: 속성 표시 ========== -->
-    <template v-if="node || relationship">
-      <!-- 노드/관계 타입 표시 -->
-      <div class="type-header" v-if="node">
-        <span class="type-label">Node</span>
-        <span class="type-badge" v-for="label in node.labels" :key="label">{{ label }}</span>
+    <!-- ========== 노드 선택 시: 노드 속성 표시 ========== -->
+    <template v-if="node">
+      <!-- 노드 타입 표시 (각 라벨의 색상 적용) -->
+      <div class="type-header">
+        <span 
+          class="type-badge" 
+          v-for="label in nodeClassLabels" 
+          :key="label"
+          :style="{ background: labelColors.get(label) || nodeColor }"
+        >
+          {{ label }}
+        </span>
       </div>
-      <div class="type-header" v-if="relationship">
-        <span class="type-badge">{{ relationship.type }}</span>
+      
+      <!-- Properties 테이블 -->
+      <div class="props-table-wrapper">
+        <table class="props-table">
+          <thead>
+            <tr>
+              <th class="col-key">속성</th>
+              <th class="col-value">값</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-if="properties.length === 0">
+              <td colspan="2" class="cell-empty">속성이 없습니다</td>
+            </tr>
+            <tr v-for="prop in properties" :key="prop.key">
+              <td class="cell-key">{{ prop.key }}</td>
+              <td class="cell-value">
+                <div 
+                  class="value-container" 
+                  :class="{ expanded: expandedKeys.has(prop.key) }"
+                >
+                  <div class="value-content">{{ prop.value }}</div>
+                </div>
+                <button 
+                  v-if="isLongValue(prop.value)" 
+                  class="show-toggle"
+                  @click="toggleExpand(prop.key)"
+                >
+                  {{ expandedKeys.has(prop.key) ? '접기' : '전체 보기' }}
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </template>
+    
+    <!-- ========== 관계 선택 시: 관계 속성 표시 (노드가 없을 때만) ========== -->
+    <template v-else-if="relationship">
+      <!-- 관계 타입 표시 -->
+      <div class="type-header">
+        <span class="type-badge relationship-badge">{{ relationship.type }}</span>
       </div>
       
       <!-- Properties 테이블 -->
@@ -358,6 +430,11 @@ function handleNodeTypeClick(event: MouseEvent, nodeType: string): void {
   border-radius: 4px;
   background: #3b82f6;
   color: white;
+  
+  &.relationship-badge {
+    background: #9ca3af;
+    color: white;
+  }
 }
 
 // ============================================================================

@@ -96,8 +96,6 @@ export interface UmlRelationship {
   type: string
   label?: string
   multiplicity?: string
-  /** DEPENDENCY의 경우, 의존 이유 목록 (여러 DEPENDENCY 병합 시 사용) */
-  reasons?: string[]
 }
 
 /** VueFlow 노드 데이터 */
@@ -294,104 +292,85 @@ export function filterNoiseDependencies(
 /**
  * 관계 중복 제거 및 병합
  * 
- * 1. 여러 관계 타입이 있을 때: 상위 관계만 우선 표시 (EXTENDS/IMPLEMENTS는 동시 표시)
- * 2. 같은 관계 타입이 여러 개 있을 때: 하나로 병합하고 source_member를 reasons로 수집
+ * - 같은 노드 쌍 간 가장 강한 관계만 유지 (EXTENDS/IMPLEMENTS는 둘 다 유지)
+ * - source_members 병합
+ * - 양방향 관계 감지
  * 
  * 우선순위: EXTENDS/IMPLEMENTS (4) > COMPOSITION (3) > ASSOCIATION (2) > DEPENDENCY (1)
  */
 export function dedupeRelationships(links: GraphLink[]): GraphLink[] {
-  // 같은 두 노드 사이의 관계들을 그룹화: key -> 관계 타입별 맵
-  const relationshipGroups = new Map<string, Map<string, GraphLink[]>>()
-  
+  // 1. 노드 쌍 + 타입별로 그룹화
+  const groups = new Map<string, GraphLink[]>()
   for (const link of links) {
-    const type = link.type?.toUpperCase() || ''
-    const key = `${link.source}::${link.target}`
-    
-    let typeMap = relationshipGroups.get(key)
-    if (!typeMap) {
-      typeMap = new Map()
-      relationshipGroups.set(key, typeMap)
-    }
-    
-    const typeLinks = typeMap.get(type) || []
-    typeLinks.push(link)
-    typeMap.set(type, typeLinks)
+    const key = `${link.source}::${link.target}::${link.type?.toUpperCase() || ''}`
+    const arr = groups.get(key) || []
+    arr.push(link)
+    groups.set(key, arr)
   }
   
-  const result: GraphLink[] = []
+  // 2. 같은 타입의 링크들을 병합 (source_members 수집)
+  const merged = new Map<string, GraphLink>()
+  for (const [key, groupLinks] of groups) {
+    const base = groupLinks[0]
+    const mergedLink = { 
+      ...base, 
+      properties: base.properties ? { ...base.properties } : {} 
+    }
+    
+    // source_members 병합
+    const allMembers = new Set<string>()
+    for (const link of groupLinks) {
+      const members = link.properties?.source_members
+      if (!members) continue
+      const arr = Array.isArray(members) ? members : [members]
+      arr.filter(Boolean).forEach(m => allMembers.add(String(m)))
+    }
+    mergedLink.properties.source_members = Array.from(allMembers)
+    merged.set(key, mergedLink)
+  }
   
-  // 각 노드 쌍별로 처리
-  for (const [key, typeMap] of relationshipGroups) {
-    // 1단계: 관계 타입별로 source_member 수집 (병합 준비)
-    const typeToReasons = new Map<string, string[]>()
-    const typeToLinks = new Map<string, GraphLink[]>()
-    
-    for (const [type, typeLinks] of typeMap) {
-      typeToLinks.set(type, typeLinks)
-      
-      // 같은 타입의 모든 링크에서 source_member 수집
-      const reasons: string[] = []
-      for (const link of typeLinks) {
-        const sourceMembers = link.properties?.source_members
-        if (Array.isArray(sourceMembers)) {
-          sourceMembers.filter(Boolean).forEach(m => {
-            if (!reasons.includes(m)) reasons.push(m)
-          })
-        } else if (sourceMembers) {
-          const member = String(sourceMembers)
-          if (!reasons.includes(member)) reasons.push(member)
-        }
-      }
-      typeToReasons.set(type, reasons)
-    }
-    
-    // 2단계: 우선순위에 따라 가장 강한 관계만 선택
-    // EXTENDS와 IMPLEMENTS는 같은 레벨이므로 둘 다 유지
-    const selectedTypes = new Set<string>()
-    let maxStrength = 0
-    
+  // 3. 노드 쌍별로 가장 강한 관계만 선택
+  const pairGroups = new Map<string, GraphLink[]>()
+  for (const link of merged.values()) {
+    const pairKey = `${link.source}::${link.target}`
+    const arr = pairGroups.get(pairKey) || []
+    arr.push(link)
+    pairGroups.set(pairKey, arr)
+  }
+  
+  // 4. 양방향 관계 감지용 키 세트
+  const processedBidirectional = new Set<string>()
+  
+  const result: GraphLink[] = []
+  for (const [pairKey, pairLinks] of pairGroups) {
     // 최대 강도 찾기
-    for (const [type] of typeMap) {
-      const strength = RELATION_STRENGTH[type] || 0
-      if (strength > maxStrength) {
-        maxStrength = strength
-      }
-    }
+    const maxStrength = Math.max(...pairLinks.map(l => RELATION_STRENGTH[l.type?.toUpperCase() || ''] || 0))
     
-    // 최대 강도인 관계 타입들 선택 (EXTENDS/IMPLEMENTS는 둘 다)
-    for (const [type] of typeMap) {
+    // 최대 강도인 관계만 선택 (EXTENDS/IMPLEMENTS는 둘 다 유지)
+    const selected = pairLinks.filter(l => {
+      const type = l.type?.toUpperCase() || ''
       const strength = RELATION_STRENGTH[type] || 0
-      if (strength === maxStrength) {
-        // EXTENDS/IMPLEMENTS는 같은 레벨이므로 둘 다 유지
-        if (type === 'EXTENDS' || type === 'IMPLEMENTS') {
-          selectedTypes.add(type)
-        } else {
-          // 다른 타입은 하나만 선택 (같은 강도면 첫 번째)
-          if (!selectedTypes.has(type)) {
-            selectedTypes.add(type)
-          }
-        }
-      }
-    }
+      return strength === maxStrength
+    })
     
-    // 3단계: 선택된 관계 타입들을 결과에 추가 (병합된 source_member 포함)
-    for (const type of selectedTypes) {
-      const typeLinks = typeToLinks.get(type) || []
-      if (typeLinks.length === 0) continue
+    for (const link of selected) {
+      const type = link.type?.toUpperCase() || ''
+      const [source, target] = pairKey.split('::')
+      const reverseKey = `${target}::${source}`
       
-      // 첫 번째 링크를 대표로 사용
-      const representativeLink = typeLinks[0]
-      const reasons = typeToReasons.get(type) || []
+      // 양방향 관계 확인
+      const reverseLinks = pairGroups.get(reverseKey)
+      const isBidirectional = reverseLinks?.some(r => r.type?.toUpperCase() === type) ?? false
       
-      // reasons가 있으면 properties에 저장 (나중에 convertToUmlRelationship에서 사용)
-      if (reasons.length > 0) {
-        if (!representativeLink.properties) {
-          representativeLink.properties = {}
-        }
-        representativeLink.properties._merged_reasons = reasons
+      if (isBidirectional) {
+        // 양방향은 한 번만 추가
+        const biKey = source < target ? `${source}::${target}::${type}` : `${target}::${source}::${type}`
+        if (processedBidirectional.has(biKey)) continue
+        processedBidirectional.add(biKey)
+        link.properties.is_bidirectional = true
       }
       
-      result.push(representativeLink)
+      result.push(link)
     }
   }
   
@@ -579,13 +558,13 @@ export function buildMethodParametersMap(
   }
   
   // 파라미터 index 순으로 정렬
-  map.forEach((params, methodId) => {
+  for (const params of map.values()) {
     params.sort((a, b) => {
       const indexA = (a.properties?.index as number) || 0
       const indexB = (b.properties?.index as number) || 0
       return indexA - indexB
     })
-  })
+  }
   
   return map
 }
@@ -707,8 +686,10 @@ export function convertToUmlRelationship(
   
   if (!sourceClassName || !targetClassName) return null
   
-  // label 처리 (DEPENDENCY가 아닌 경우에만 표시)
-  let label = ''
+  const linkType = link.type?.toUpperCase() || 'ASSOCIATION'
+  
+  // label 처리: source_members를 우선 사용, 없으면 label 사용
+  let label: string | undefined = undefined
   const rawLabel = link.properties?.source_members || link.properties?.label
   if (Array.isArray(rawLabel)) {
     label = rawLabel.filter(Boolean).join(', ')
@@ -716,20 +697,15 @@ export function convertToUmlRelationship(
     label = String(rawLabel)
   }
   
-  // DEPENDENCY의 경우 reasons 추출 (병합된 경우)
-  const reasons = link.properties?._merged_reasons as string[] | undefined
-  
   return {
     id: link.id,
     source: link.source,
     target: link.target,
     sourceClassName,
     targetClassName,
-    type: link.type?.toUpperCase() || 'ASSOCIATION',
-    // DEPENDENCY는 label을 표시하지 않음 (reasons는 클릭 시 노드패널에 표시)
-    label: (link.type?.toUpperCase() === 'DEPENDENCY' ? undefined : label) || undefined,
-    multiplicity: (link.properties?.multiplicity as string) || undefined,
-    reasons: reasons
+    type: linkType,
+    label: label,
+    multiplicity: (link.properties?.multiplicity as string) || undefined
   }
 }
 

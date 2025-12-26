@@ -225,6 +225,27 @@ export const useProjectStore = defineStore('project', () => {
     linkMap.value = new Map()
   }
   
+  /**
+   * 노드와 연결된 관계 삭제
+   */
+  function deleteNodeAndRelationships(nodeId: string): void {
+    const newNodeMap = new Map(nodeMap.value)
+    const newLinkMap = new Map(linkMap.value)
+    
+    // 노드 삭제
+    newNodeMap.delete(nodeId)
+    
+    // 연결된 관계 삭제
+    for (const [linkId, link] of linkMap.value.entries()) {
+      if (link.source === nodeId || link.target === nodeId) {
+        newLinkMap.delete(linkId)
+      }
+    }
+    
+    nodeMap.value = newNodeMap
+    linkMap.value = newLinkMap
+  }
+  
   // ==========================================================================
   // 내부 함수 - 메시지
   // ==========================================================================
@@ -565,6 +586,7 @@ export const useProjectStore = defineStore('project', () => {
     // Actions - Misc
     downloadZip,
     deleteAllData,
+    deleteNodeAndRelationships,
     reset
   }
 })

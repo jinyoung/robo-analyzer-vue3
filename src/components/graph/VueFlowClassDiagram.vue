@@ -10,8 +10,8 @@
  * - 드래그/줌 인터랙션
  */
 
-import { ref, computed, watch, onMounted, nextTick } from 'vue'
-import { VueFlow, useVueFlow } from '@vue-flow/core'
+import { ref, computed, watch, nextTick } from 'vue'
+import { VueFlow, useVueFlow, Handle, Position } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
 import { MiniMap } from '@vue-flow/minimap'
@@ -25,8 +25,7 @@ import {
   type UmlClass,
   type ClassDiagramData
 } from '@/utils/classDiagram'
-import ELK from 'elkjs/lib/elk.bundled.js'
-import ElkEdge from './ElkEdge.vue'
+import ELK from 'elkjs'
 import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
 import '@vue-flow/controls/dist/style.css'
@@ -53,7 +52,7 @@ const props = withDefaults(defineProps<Props>(), {
 
 const emit = defineEmits<{
   /** 클래스 노드 클릭 */
-  (e: 'class-click', className: string, directory: string): void
+  (e: 'class-click', nodeId: string): void
   /** 클래스 노드 더블클릭 (확장) */
   (e: 'class-expand', className: string, directory: string): void
 }>()
@@ -65,7 +64,7 @@ const emit = defineEmits<{
 const { fitView } = useVueFlow()
 
 // ============================================================================
-// ELK 인스턴스
+// ELK 레이아웃 엔진
 // ============================================================================
 
 const elk = new ELK()
@@ -93,103 +92,167 @@ const diagramData = ref<ClassDiagramData | null>(null)
 /** 다이어그램이 비어있는지 */
 const isEmpty = computed(() => nodes.value.length === 0)
 
-// ============================================================================
-// 유틸리티 함수 - ELK 레이아웃
-// ============================================================================
-
-type ElkResult = {
-  positions: Map<string, { x: number; y: number }>
-  edgeRoutes: Map<string, Array<{ x: number; y: number }>>
-}
-
 function isInheritance(type: string): boolean {
   return type === 'EXTENDS' || type === 'IMPLEMENTS'
 }
 
+/** 노드 크기 정보 */
+interface NodeSize {
+  width: number
+  height: number
+}
+
 /**
- * ELK를 사용한 레이아웃 계산 (노드 위치 + 엣지 경로)
- * - DEPENDENCY는 레이아웃에서 제외하여 구조를 망치지 않도록 함
- * - 포트 강제를 통해 확실한 라우팅 보장
+ * 두 노드가 겹치는지 확인 (마진 포함)
  */
-async function layoutWithElk(
+function checkOverlap(
+  pos1: { x: number; y: number }, size1: NodeSize,
+  pos2: { x: number; y: number }, size2: NodeSize,
+  margin: number
+): boolean {
+  return !(
+    pos1.x + size1.width + margin < pos2.x ||
+    pos2.x + size2.width + margin < pos1.x ||
+    pos1.y + size1.height + margin < pos2.y ||
+    pos2.y + size2.height + margin < pos1.y
+  )
+}
+
+/**
+ * 겹침 해소: 겹치는 노드들을 밀어내기
+ */
+function resolveOverlaps(
+  positions: Map<string, { x: number; y: number }>,
+  sizes: Map<string, NodeSize>,
+  margin: number = 60
+): void {
+  const ids = Array.from(positions.keys())
+  
+  for (let iter = 0; iter < 100; iter++) {
+    let hasOverlap = false
+    
+    for (let i = 0; i < ids.length; i++) {
+      for (let j = i + 1; j < ids.length; j++) {
+        const posA = positions.get(ids[i])!
+        const posB = positions.get(ids[j])!
+        const sizeA = sizes.get(ids[i])!
+        const sizeB = sizes.get(ids[j])!
+        
+        if (checkOverlap(posA, sizeA, posB, sizeB, margin)) {
+          hasOverlap = true
+          
+          // 중심점 계산
+          const cx1 = posA.x + sizeA.width / 2
+          const cy1 = posA.y + sizeA.height / 2
+          const cx2 = posB.x + sizeB.width / 2
+          const cy2 = posB.y + sizeB.height / 2
+          
+          // 방향 벡터
+          let dx = cx2 - cx1
+          let dy = cy2 - cy1
+          const dist = Math.sqrt(dx * dx + dy * dy)
+          
+          if (dist < 1) {
+            // 같은 위치면 랜덤 방향
+            const angle = Math.random() * Math.PI * 2
+            dx = Math.cos(angle)
+            dy = Math.sin(angle)
+          } else {
+            dx /= dist
+            dy /= dist
+          }
+          
+          // 밀어내기 (강하게)
+          const push = 100
+          posA.x -= dx * push
+          posA.y -= dy * push
+          posB.x += dx * push
+          posB.y += dy * push
+        }
+      }
+    }
+    
+    if (!hasOverlap) break
+  }
+}
+
+/**
+ * 방사형 레이아웃 계산
+ * - ELK stress 알고리즘으로 균등 분포
+ * - 겹침 후처리로 완전 분리
+ */
+async function calculateElkLayout(
   classes: UmlClass[],
   relationships: Array<{ id: string; source: string; target: string; type: string; label?: string }>
-): Promise<ElkResult> {
-  // ✅ 0) 레이아웃을 망치는 dependency는 제외
-  const layoutRels = relationships.filter(r => r.type !== 'DEPENDENCY')
-
-  // ✅ 1) ELK 그래프
-  const elkGraph: any = {
-    id: 'root',
-    layoutOptions: {
-      'elk.algorithm': 'layered',
-      'elk.direction': 'DOWN',
-      // ✅ 포트 강제 (이거 없으면 포트 side가 무시되는 케이스 많음)
-      'elk.portConstraints': 'FIXED_SIDE',
-      // ✅ spacing은 크게 잡아야 UML이 정돈됨 (300px 노드 기준)
-      'elk.spacing.nodeNode': '150',
-      'elk.layered.spacing.nodeNodeBetweenLayers': '240',
-      // ✅ UML은 직각 라우팅이 정석 (교차/겹침이 크게 줄어듦)
-      'elk.edgeRouting': 'ORTHOGONAL',
-      'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
-      'elk.layered.nodePlacement.strategy': 'NETWORK_SIMPLEX',
-    },
-    // ✅ 2) 노드 + 포트 정의 (layoutOptions로 side 지정)
-    children: classes.map((cls) => ({
-      id: cls.id,
-      width: 300,
-      height: calculateNodeHeight(cls) + 20, // 약간 여유
-      // 노드 레벨에서도 한 번 더 강제
-      layoutOptions: {
-        'elk.portConstraints': 'FIXED_SIDE',
-      },
-      ports: [
-        { id: `${cls.id}:top`,    layoutOptions: { 'elk.port.side': 'NORTH' } },
-        { id: `${cls.id}:bottom`, layoutOptions: { 'elk.port.side': 'SOUTH' } },
-        { id: `${cls.id}:left`,   layoutOptions: { 'elk.port.side': 'WEST' } },
-        { id: `${cls.id}:right`,  layoutOptions: { 'elk.port.side': 'EAST' } },
-      ],
-    })),
-    // ✅ 3) 엣지: sources/targets는 "port id"를 사용 (포트 강제)
-    edges: layoutRels.map((rel) => {
-      const inh = isInheritance(rel.type)
-      const sourcePort = inh ? `${rel.source}:bottom` : `${rel.source}:right`
-      const targetPort = inh ? `${rel.target}:top`    : `${rel.target}:left`
-
-      return {
-        id: rel.id,
-        sources: [sourcePort],
-        targets: [targetPort],
-        // 상속은 아래로 흐르도록 약간 더 강제 (있으면 도움)
-        ...(inh ? { layoutOptions: { 'elk.layered.priority.direction': '1' } } : {}),
-      }
-    }),
-  }
-
-  // ✅ 4) 레이아웃 실행
-  const out = await elk.layout(elkGraph)
-
-  // ✅ 5) 노드 위치
+): Promise<Map<string, { x: number; y: number }>> {
   const positions = new Map<string, { x: number; y: number }>()
-  for (const n of out.children ?? []) {
-    positions.set(n.id, { x: n.x ?? 0, y: n.y ?? 0 })
+  
+  if (classes.length === 0) return positions
+  
+  // 노드 크기 계산
+  const NODE_WIDTH = 300
+  const nodeSizes = new Map<string, NodeSize>()
+  for (const cls of classes) {
+    nodeSizes.set(cls.id, { width: NODE_WIDTH, height: calculateNodeHeight(cls) })
   }
-
-  // ✅ 6) 엣지 경로
-  const edgeRoutes = new Map<string, Array<{ x: number; y: number }>>()
-  for (const e of out.edges ?? []) {
-    const section = e.sections?.[0]
-    if (!section) continue
-
-    const pts: Array<{ x: number; y: number }> = []
-    if (section.startPoint) pts.push(section.startPoint)
-    if (section.bendPoints?.length) pts.push(...section.bendPoints)
-    if (section.endPoint) pts.push(section.endPoint)
-
-    edgeRoutes.set(e.id, pts)
+  
+  // 아주 넓은 간격 (직선 엣지가 노드 사이를 통과하지 않도록)
+  const maxHeight = Math.max(...Array.from(nodeSizes.values()).map(s => s.height))
+  const baseSpacing = Math.max(NODE_WIDTH, maxHeight) + 250
+  
+  // ELK 그래프 모델
+  const elkGraph = {
+    id: 'root',
+    children: classes.map(cls => ({
+      id: cls.id,
+      width: nodeSizes.get(cls.id)!.width,
+      height: nodeSizes.get(cls.id)!.height
+    })),
+    edges: relationships.map(rel => ({
+      id: rel.id,
+      sources: [rel.source],
+      targets: [rel.target]
+    }))
   }
-
-  return { positions, edgeRoutes }
+  
+  // ELK stress 알고리즘 - 아주 넓게 펼치기
+  const layoutOptions: Record<string, string> = {
+    'elk.algorithm': 'stress',
+    'elk.stress.desiredEdgeLength': String(baseSpacing * 2),
+    'elk.stress.epsilon': '0.000001',
+    'elk.stress.iterationLimit': '1500',
+    'elk.spacing.nodeNode': String(baseSpacing * 1.5),
+    'elk.separateConnectedComponents': 'true',
+    'elk.spacing.componentComponent': String(baseSpacing * 2.5)
+  }
+  
+  try {
+    const result = await elk.layout(elkGraph, { layoutOptions })
+    
+    if (result.children) {
+      for (const child of result.children) {
+        positions.set(child.id, { x: child.x || 0, y: child.y || 0 })
+      }
+    }
+    
+    // 겹침 후처리 (큰 마진으로 확실히 분리)
+    resolveOverlaps(positions, nodeSizes, 180)
+    
+  } catch (error) {
+    console.error('ELK 레이아웃 오류, 그리드 배치:', error)
+    
+    // 그리드 배치 (fallback)
+    const cols = Math.ceil(Math.sqrt(classes.length))
+    classes.forEach((cls, i) => {
+      const size = nodeSizes.get(cls.id)!
+      positions.set(cls.id, {
+        x: (i % cols) * (NODE_WIDTH + 300),
+        y: Math.floor(i / cols) * (size.height + 200)
+      })
+    })
+  }
+  
+  return positions
 }
 
 /**
@@ -322,10 +385,19 @@ async function buildDiagram(): Promise<void> {
   
   diagramData.value = data
   
-  // 3. ELK 레이아웃 실행
-  const { positions, edgeRoutes } = await layoutWithElk(data.classes, data.relationships)
+  // 원본 GraphLink 맵 생성 (properties 접근용 - is_bidirectional 등)
+  const originalLinkMap = new Map<string, GraphLink>()
+  for (const rel of data.relationships) {
+    const originalLink = props.graphLinks.find(l => l.id === rel.id)
+    if (originalLink) {
+      originalLinkMap.set(rel.id, originalLink)
+    }
+  }
   
-  // 4. VueFlow 노드 생성 (ELK positions 사용)
+  // 3. ELK 레이아웃 계산 (비동기)
+  const positions = await calculateElkLayout(data.classes, data.relationships)
+  
+  // 4. VueFlow 노드 생성
   nodes.value = data.classes.map(cls => {
     const pos = positions.get(cls.id) || { x: 0, y: 0 }
     const isSelected = props.selectedClasses.some(
@@ -354,44 +426,98 @@ async function buildDiagram(): Promise<void> {
     }
   })
   
-  // 5. VueFlow 엣지 생성 (ELK가 준 route를 data로 넣음)
-  edges.value = data.relationships.map(rel => {
-    const route = edgeRoutes.get(rel.id) || null
-    const isDep = rel.type === 'DEPENDENCY'
-    const arrowStyle = ARROW_STYLES[rel.type] || ARROW_STYLES.ASSOCIATION
-    const lineColor = isDep ? '#666666' : '#333333'
+  // 5. VueFlow 엣지 생성 (모두 직각, 시작점 분산)
+  
+  // 같은 source+handle에서 나가는 엣지 카운트 (오프셋용)
+  const handleEdges = new Map<string, number>()  // "nodeId:handle" -> count
+  const handleIndex = new Map<string, number>()  // "nodeId:handle" -> current index
+  
+  // 1차: 각 엣지의 handle 방향 먼저 결정
+  const edgeHandles = data.relationships.map(rel => {
+    const sourcePos = positions.get(rel.source)
+    const targetPos = positions.get(rel.target)
+    let sourceHandle = 'right'
+    let targetHandle = 'left'
     
-    // style 문자열을 CSSProperties 객체로 변환
-    const styleObj: Record<string, string> = {}
-    const styleParts = arrowStyle.style.split(';').filter(Boolean)
-    for (const part of styleParts) {
-      const [key, value] = part.split(':').map(s => s.trim())
-      if (key && value) {
-        const cssKey = key.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())
-        styleObj[cssKey] = value
+    if (sourcePos && targetPos) {
+      const dx = Math.abs(targetPos.x - sourcePos.x)
+      const dy = Math.abs(targetPos.y - sourcePos.y)
+      
+      if (dx > dy) {
+        sourceHandle = targetPos.x > sourcePos.x ? 'right' : 'left'
+        targetHandle = targetPos.x > sourcePos.x ? 'left' : 'right'
+      } else {
+        sourceHandle = targetPos.y > sourcePos.y ? 'bottom' : 'top'
+        targetHandle = targetPos.y > sourcePos.y ? 'top' : 'bottom'
       }
     }
+    
+    // 카운트 증가
+    const sourceKey = `${rel.source}:${sourceHandle}`
+    handleEdges.set(sourceKey, (handleEdges.get(sourceKey) || 0) + 1)
+    
+    return { rel, sourceHandle, targetHandle }
+  })
+  
+  // 2차: 오프셋 적용하여 엣지 생성
+  edges.value = edgeHandles.map(({ rel, sourceHandle, targetHandle }) => {
+    const isInherit = isInheritance(rel.type)
+    const isDep = rel.type === 'DEPENDENCY'
+    const arrowStyle = ARROW_STYLES[rel.type] || ARROW_STYLES.ASSOCIATION
+    const lineColor = isInherit ? '#444' : (isDep ? '#999' : '#666')
+    
+    // 라벨
+    const typeLabels: Record<string, string> = {
+      'EXTENDS': 'extends',
+      'IMPLEMENTS': 'implements',
+      'DEPENDENCY': 'uses'
+    }
+    const label = rel.label || typeLabels[rel.type] || rel.type.toLowerCase()
+    
+    // 스타일
+    const styleObj: Record<string, string> = {}
+    for (const part of arrowStyle.style.split(';').filter(Boolean)) {
+      const [key, value] = part.split(':').map(s => s.trim())
+      if (key && value) {
+        styleObj[key.replace(/-([a-z])/g, (_, l) => l.toUpperCase())] = value
+      }
+    }
+    
+    // 마커
+    const markerEnd = { type: arrowStyle.markerEnd as any, color: lineColor }
+    const originalLink = originalLinkMap.get(rel.id)
+    const isBidirectional = originalLink?.properties?.is_bidirectional === true
+    const markerStart = isBidirectional && !isInherit 
+      ? { type: arrowStyle.markerEnd as any, color: lineColor } 
+      : undefined
+    
+    // 오프셋 계산 (같은 handle에서 나가는 여러 엣지 분산)
+    const sourceKey = `${rel.source}:${sourceHandle}`
+    const totalFromHandle = handleEdges.get(sourceKey) || 1
+    const currentIdx = handleIndex.get(sourceKey) || 0
+    handleIndex.set(sourceKey, currentIdx + 1)
+    
+    // 오프셋: 중앙 기준으로 ±20px씩 분산
+    const offset = totalFromHandle > 1 
+      ? (currentIdx - (totalFromHandle - 1) / 2) * 25
+      : 0
     
     return {
       id: rel.id,
       source: rel.source,
       target: rel.target,
-      // ✅ route 있으면 elkEdge로, 없으면 기본 bezier로
-      type: route ? 'elkEdge' : 'bezier',
+      sourceHandle,
+      targetHandle,
+      type: 'smoothstep',
+      pathOptions: { offset },
       animated: false,
-      label: rel.label || '',
-      labelStyle: { fontSize: 10, fill: '#333333', fontWeight: 500 },
-      labelBgStyle: { fill: '#ffffff', fillOpacity: 0.9 },
+      label,
+      labelStyle: { fontSize: 10, fill: '#555', fontWeight: 500 },
+      labelBgStyle: { fill: '#fff', fillOpacity: 0.9 },
       style: styleObj,
-      markerEnd: {
-        type: arrowStyle.markerEnd as any,
-        color: lineColor
-      } as any,
-      // ELK 경로 points를 넘김 (없으면 null)
-      data: {
-        relationship: rel,
-        points: route,
-      }
+      markerEnd,
+      markerStart,
+      data: { relationship: rel }
     } as unknown as Edge
   })
   
@@ -411,11 +537,7 @@ async function buildDiagram(): Promise<void> {
 function onNodeClick(event: NodeMouseEvent): void {
   const nodeId = event.node.id
   selectedNodeId.value = nodeId
-  
-  const umlClass = (event.node.data as any)?.umlClass as UmlClass
-  if (umlClass) {
-    emit('class-click', umlClass.className, umlClass.directory)
-  }
+  emit('class-click', nodeId)
 }
 
 /**
@@ -436,7 +558,11 @@ let layoutRunId = 0
 
 async function rebuildSafely(): Promise<void> {
   const myId = ++layoutRunId
-  await buildDiagram()
+  try {
+    await buildDiagram()
+  } catch (error) {
+    console.error('다이어그램 빌드 오류:', error)
+  }
   // 최신 호출만 적용되도록 (race 방지)
   if (myId !== layoutRunId) {
     return
@@ -476,9 +602,7 @@ watch(
 // 라이프사이클
 // ============================================================================
 
-onMounted(() => {
-  rebuildSafely()
-})
+// watch가 immediate: true로 초기 렌더링 처리
 </script>
 
 <template>
@@ -516,11 +640,6 @@ onMounted(() => {
         zoomable
       />
       
-      <!-- ELK 커스텀 엣지 -->
-      <template #edge-elkEdge="edgeProps">
-        <ElkEdge v-bind="edgeProps" />
-      </template>
-      
       <!-- 커스텀 클래스 노드 (UML 클래스 다이어그램 표준) -->
       <!-- 
         UML 클래스 다이어그램 표기법:
@@ -541,6 +660,11 @@ onMounted(() => {
             'is-selected': data.isSelected
           }"
         >
+          <Handle id="top" type="source" :position="Position.Top" class="connection-handle" />
+          <Handle id="bottom" type="target" :position="Position.Bottom" class="connection-handle" />
+          <Handle id="right" type="source" :position="Position.Right" class="connection-handle" />
+          <Handle id="left" type="target" :position="Position.Left" class="connection-handle" />
+          
           <!-- 헤더 (클래스명 + 스테레오타입) -->
           <div class="class-header">
             <div class="stereotype" v-if="data.umlClass.classType !== 'class' || data.umlClass.isAbstract">
@@ -603,50 +727,20 @@ onMounted(() => {
       </template>
     </VueFlow>
     
-    <!-- 범례 + 통계 (노드패널 버튼 바로 아래) -->
-    <div class="legend" v-if="!isEmpty">
-      <div class="legend-title">관계 타입</div>
+    <!-- 범례 (간소화) -->
+    <div class="legend" v-if="!isEmpty && diagramData">
       <div class="legend-items">
         <div class="legend-item">
-          <svg class="legend-icon" viewBox="0 0 40 16">
-            <line x1="0" y1="8" x2="30" y2="8" stroke="#333" stroke-width="2"/>
-            <polygon points="30,4 38,8 30,12" fill="none" stroke="#333" stroke-width="1.5"/>
-          </svg>
-          <span>상속 (extends)</span>
+          <span class="line solid"></span>
+          <span>상속/구현</span>
         </div>
         <div class="legend-item">
-          <svg class="legend-icon" viewBox="0 0 40 16">
-            <line x1="0" y1="8" x2="30" y2="8" stroke="#333" stroke-width="2" stroke-dasharray="4 3"/>
-            <polygon points="30,4 38,8 30,12" fill="none" stroke="#333" stroke-width="1.5"/>
-          </svg>
-          <span>구현 (implements)</span>
-        </div>
-        <div class="legend-item">
-          <svg class="legend-icon" viewBox="0 0 40 16">
-            <polygon points="0,8 6,4 12,8 6,12" fill="#333"/>
-            <line x1="12" y1="8" x2="40" y2="8" stroke="#333" stroke-width="2"/>
-          </svg>
-          <span>합성 (composition)</span>
-        </div>
-        <div class="legend-item">
-          <svg class="legend-icon" viewBox="0 0 40 16">
-            <line x1="0" y1="8" x2="32" y2="8" stroke="#333" stroke-width="2"/>
-            <polyline points="28,4 36,8 28,12" fill="none" stroke="#333" stroke-width="2"/>
-          </svg>
-          <span>연관 (association)</span>
-        </div>
-        <div class="legend-item">
-          <svg class="legend-icon" viewBox="0 0 40 16">
-            <line x1="0" y1="8" x2="32" y2="8" stroke="#666" stroke-width="1.5" stroke-dasharray="3 2"/>
-            <polyline points="28,4 36,8 28,12" fill="none" stroke="#666" stroke-width="1.5"/>
-          </svg>
-          <span>의존 (dependency)</span>
+          <span class="line dashed"></span>
+          <span>의존</span>
         </div>
       </div>
-      <div class="legend-stats" v-if="diagramData">
-        <span>클래스 {{ diagramData.classes.length }}개</span>
-        <span class="divider">·</span>
-        <span>관계 {{ diagramData.relationships.length }}개</span>
+      <div class="legend-stats">
+        {{ diagramData.classes.length }}개 클래스 · {{ diagramData.relationships.length }}개 관계
       </div>
     </div>
   </div>
@@ -701,6 +795,14 @@ onMounted(() => {
 // ============================================================================
 
 // 머메이드 스타일 클래스 노드
+.connection-handle {
+  width: 8px;
+  height: 8px;
+  border: 2px solid #1a192b;
+  background: white;
+  border-radius: 50%;
+}
+
 .class-node {
   background: #ffffde;
   border: 2px solid #333333;
@@ -967,63 +1069,54 @@ onMounted(() => {
 }
 
 // ============================================================================
-// 범례 (노드패널 버튼 바로 아래)
+// 범례 (간소화)
 // ============================================================================
 
 .legend {
   position: absolute;
-  top: 48px;
-  right: 8px;
-  background: #fffef8;
-  border: 1px solid #d4d4d4;
-  border-radius: 4px;
-  padding: 12px 16px;
-  font-size: 12px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  top: 10px;
+  right: 10px;
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 11px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
   z-index: 10;
-  
-  .legend-title {
-    font-weight: 600;
-    color: #333333;
-    margin-bottom: 10px;
-    padding-bottom: 8px;
-    border-bottom: 1px solid #e5e5e5;
-    font-size: 13px;
-  }
   
   .legend-items {
     display: flex;
-    flex-direction: column;
-    gap: 6px;
+    gap: 12px;
+    margin-bottom: 4px;
   }
   
   .legend-item {
     display: flex;
     align-items: center;
-    gap: 10px;
-    color: #333333;
-    font-size: 12px;
+    gap: 6px;
+    color: #555;
     
-    .legend-icon {
-      width: 40px;
-      height: 16px;
-      flex-shrink: 0;
+    .line {
+      display: inline-block;
+      width: 20px;
+      height: 2px;
+      background: #555;
+      
+      &.dashed {
+        background: repeating-linear-gradient(
+          to right,
+          #888 0px,
+          #888 4px,
+          transparent 4px,
+          transparent 7px
+        );
+      }
     }
   }
   
   .legend-stats {
-    margin-top: 10px;
-    padding-top: 8px;
-    border-top: 1px solid #e5e5e5;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 11px;
-    color: #666;
-    
-    .divider {
-      color: #ccc;
-    }
+    color: #888;
+    font-size: 10px;
   }
 }
 
