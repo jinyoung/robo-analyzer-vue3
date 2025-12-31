@@ -227,3 +227,111 @@ export interface UmlDiagramState {
   selectedClasses: SelectedClassInfo[]
   depth: number
 }
+
+// ============================================================================
+// Text2SQL (ReAct)
+// ============================================================================
+
+/** Text2SQL 테이블 정보 */
+export interface Text2SqlTableInfo {
+  name: string
+  schema: string
+  description: string
+  column_count: number
+}
+
+/** Text2SQL 컬럼 정보 */
+export interface Text2SqlColumnInfo {
+  name: string
+  table_name: string
+  dtype: string
+  nullable: boolean
+  description: string
+}
+
+/** ReAct SQL 완성도 */
+export interface ReactSQLCompleteness {
+  is_complete: boolean
+  missing_info: string
+  confidence_level: string
+}
+
+/** ReAct 도구 호출 모델 */
+export interface ReactToolCallModel {
+  name: string
+  raw_parameters_xml: string
+  parameters: Record<string, unknown>
+}
+
+/** ReAct 스텝 모델 */
+export interface ReactStepModel {
+  iteration: number
+  reasoning: string
+  metadata_xml: string
+  partial_sql: string
+  sql_completeness: ReactSQLCompleteness
+  tool_call: ReactToolCallModel
+  tool_result?: string | null
+  llm_output: string
+}
+
+/** ReAct 실행 결과 */
+export interface ReactExecutionResult {
+  columns: string[]
+  rows: unknown[][]
+  row_count: number
+  execution_time_ms: number
+}
+
+/** ReAct 응답 모델 */
+export interface ReactResponseModel {
+  status: 'completed' | 'needs_user_input'
+  final_sql?: string | null
+  validated_sql?: string | null
+  execution_result?: ReactExecutionResult | null
+  steps: ReactStepModel[]
+  collected_metadata: string
+  partial_sql: string
+  remaining_tool_calls: number
+  session_state?: string | null
+  question_to_user?: string | null
+  warnings?: string[] | null
+}
+
+/** ReAct 요청 */
+export interface ReactRequest {
+  question: string
+  dbms?: string | null
+  max_tool_calls?: number
+  execute_final_sql?: boolean
+  max_iterations?: number | null
+  session_state?: string | null
+  user_response?: string | null
+  max_sql_seconds?: number
+  prefer_language?: string
+}
+
+/** ReAct 스트림 이벤트 */
+export type ReactStreamEvent =
+  | {
+      event: 'step'
+      step: ReactStepModel
+      state: Record<string, unknown>
+    }
+  | {
+      event: 'completed'
+      response: ReactResponseModel
+      state: Record<string, unknown>
+    }
+  | {
+      event: 'needs_user_input'
+      response: ReactResponseModel
+      state: Record<string, unknown>
+    }
+  | {
+      event: 'error'
+      message: string
+    }
+
+/** ReAct 상태 */
+export type ReactStatus = 'idle' | 'running' | 'needs_user_input' | 'completed' | 'error'

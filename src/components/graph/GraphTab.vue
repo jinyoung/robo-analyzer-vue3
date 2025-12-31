@@ -11,6 +11,7 @@ import NvlGraph from './NvlGraph.vue'
 import NodeDetailPanel from './NodeDetailPanel.vue'
 import NodeStylePanel from './NodeStylePanel.vue'
 import VueFlowClassDiagram from './VueFlowClassDiagram.vue'
+import Text2SqlTab from '../text2sql/Text2SqlTab.vue'
 import { getClassName, getDirectory, CLASS_LABELS } from '@/utils/classDiagram'
 import type { GraphNode, GraphLink } from '@/types'
 import { useResize } from '@/composables/useResize'
@@ -26,7 +27,7 @@ const {
 
 const MAX_SEARCH_RESULTS = 8
 
-const activeView = ref<'graph' | 'uml'>('graph')
+const activeView = ref<'graph' | 'uml' | 'text2sql'>('graph')
 const showNodePanel = ref(false)
 const showConsole = ref(false)
 const showSearch = ref(false)
@@ -110,6 +111,7 @@ const statusType = computed(() => {
 
 const hasGraph = computed(() => graphData.value?.nodes.length > 0)
 const showUmlTab = computed(() => sourceType.value === 'java' || sourceType.value === 'python')
+const showText2SqlTab = computed(() => sourceType.value === 'oracle' || sourceType.value === 'postgresql')
 
 const displayedRelationshipsCount = computed(() => 
   nvlGraphRef.value?.displayedRelationshipCount?.() ?? 0
@@ -295,6 +297,10 @@ watch(hasGraph, (has, prev) => {
         />
       </div>
       
+      <div class="view-container" v-show="activeView === 'text2sql'">
+        <Text2SqlTab />
+      </div>
+      
       <!-- 플로팅: 우측 패널 토글 -->
       <button 
         v-if="!showNodePanel"
@@ -320,6 +326,13 @@ watch(hasGraph, (has, prev) => {
           @click="activeView = 'uml'"
         >
           UML
+        </button>
+        <button 
+          :class="{ active: activeView === 'text2sql', disabled: !showText2SqlTab }"
+          :disabled="!showText2SqlTab"
+          @click="activeView = 'text2sql'"
+        >
+          Text2SQL
         </button>
       </div>
       

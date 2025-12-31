@@ -13,7 +13,11 @@ import type {
   FileUploadResponse, 
   ParseResponse,
   StreamEvent,
-  DeleteResponse
+  DeleteResponse,
+  Text2SqlTableInfo,
+  Text2SqlColumnInfo,
+  ReactRequest,
+  ReactStreamEvent
 } from '@/types'
 import { getNormalizedUploadPath } from '@/utils/upload'
 
@@ -375,6 +379,221 @@ export const backendApi = {
       throw new Error(`HTTP ${response.status}`)
     }
     
+    return response.json()
+  }
+}
+
+// ============================================================================
+// Text2SQL API (ReAct)
+// ============================================================================
+
+const TEXT2SQL_BASE_URL = '/text2sql'
+
+export const text2sqlApi = {
+  /**
+   * 테이블 목록 조회
+   */
+  async getTables(search?: string, schema?: string, limit: number = 50): Promise<Text2SqlTableInfo[]> {
+    const params = new URLSearchParams()
+    if (search) params.append('search', search)
+    if (schema) params.append('schema', schema)
+    params.append('limit', limit.toString())
+    
+    const response = await fetch(`${TEXT2SQL_BASE_URL}/meta/tables?${params}`)
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`)
+    }
+    return response.json()
+  },
+
+  /**
+   * 테이블 컬럼 조회
+   */
+  async getTableColumns(tableName: string, schema: string = 'public'): Promise<Text2SqlColumnInfo[]> {
+    const params = new URLSearchParams({ schema })
+    const response = await fetch(`${TEXT2SQL_BASE_URL}/meta/tables/${tableName}/columns?${params}`)
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`)
+    }
+    return response.json()
+  },
+
+  /**
+   * 컬럼 검색
+   */
+  async searchColumns(search: string, limit: number = 50): Promise<Text2SqlColumnInfo[]> {
+    const params = new URLSearchParams({ search, limit: limit.toString() })
+    const response = await fetch(`${TEXT2SQL_BASE_URL}/meta/columns?${params}`)
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`)
+    }
+    return response.json()
+  },
+
+  /**
+   * 테이블 설명 수정
+   */
+  async updateTableDescription(tableName: string, schema: string, description: string): Promise<void> {
+    const response = await fetch(`${TEXT2SQL_BASE_URL}/schema-edit/tables/${tableName}/description`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: tableName, schema, description })
+    })
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`)
+    }
+  },
+
+  /**
+   * 컬럼 설명 수정
+   */
+  async updateColumnDescription(
+    tableName: string, 
+    columnName: string, 
+    schema: string, 
+    description: string
+  ): Promise<void> {
+    const response = await fetch(
+      `${TEXT2SQL_BASE_URL}/schema-edit/tables/${tableName}/columns/${columnName}/description`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          table_name: tableName,
+          table_schema: schema,
+          column_name: columnName,
+          description
+        })
+      }
+    )
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`)
+    }
+  },
+
+  /**
+   * 릴레이션 추가
+   */
+  async addRelationship(relationship: {
+    from_table: string
+    from_schema: string
+    from_column: string
+    to_table: string
+    to_schema: string
+    to_column: string
+    relationship_type: string
+    description?: string
+  }): Promise<void> {
+    const response = await fetch(`${TEXT2SQL_BASE_URL}/schema-edit/relationships`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(relationship)
+    })
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`)
+    }
+  },
+
+  /**
+   * 릴레이션 삭제
+   */
+  async removeRelationship(params: {
+    from_table: string
+    from_schema: string
+    from_column: string
+    to_table: string
+    to_schema: string
+    to_column: string
+  }): Promise<void> {
+    const searchParams = new URLSearchParams(params as Record<string, string>)
+    const response = await fetch(`${TEXT2SQL_BASE_URL}/schema-edit/relationships?${searchParams}`, {
+      method: 'DELETE'
+    })
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`)
+    }
+  },
+
+  /**
+   * 사용자 추가 릴레이션 목록
+   */
+  async getUserRelationships(): Promise<{ relationships: unknown[] }> {
+    const response = await fetch(`${TEXT2SQL_BASE_URL}/schema-edit/relationships/user-added`)
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`)
+    }
+    return response.json()
+  },
+
+  /**
+   * ReAct 스트리밍 실행
+   */
+  async *reactStream(
+    request: ReactRequest,
+    options: { signal?: AbortSignal } = {}
+  ): AsyncGenerator<ReactStreamEvent, void, unknown> {
+    const response = await fetch(`${TEXT2SQL_BASE_URL}/react`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
+      signal: options.signal
+    })
+
+    if (!response.ok || !response.body) {
+      const message = await response.text()
+      throw new Error(message || 'ReAct 요청에 실패했습니다.')
+    }
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder('utf-8')
+    let buffer = ''
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        
+        buffer += decoder.decode(value, { stream: true })
+        let newlineIndex = buffer.indexOf('\n')
+        
+        while (newlineIndex !== -1) {
+          const rawLine = buffer.slice(0, newlineIndex).trim()
+          buffer = buffer.slice(newlineIndex + 1)
+          
+          if (rawLine) {
+            try {
+              const parsed = JSON.parse(rawLine) as ReactStreamEvent
+              yield parsed
+            } catch (error) {
+              console.warn('ReAct 이벤트 파싱 실패', error, rawLine)
+            }
+          }
+          newlineIndex = buffer.indexOf('\n')
+        }
+      }
+
+      const remaining = buffer.trim()
+      if (remaining) {
+        try {
+          const parsed = JSON.parse(remaining) as ReactStreamEvent
+          yield parsed
+        } catch (error) {
+          console.warn('ReAct 마지막 이벤트 파싱 실패', error, remaining)
+        }
+      }
+    } finally {
+      reader.releaseLock()
+    }
+  },
+
+  /**
+   * 헬스체크
+   */
+  async healthCheck(): Promise<unknown> {
+    const response = await fetch(`${TEXT2SQL_BASE_URL}/health`)
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`)
+    }
     return response.json()
   }
 }
